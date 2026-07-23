@@ -123,22 +123,25 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
       <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
-    <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
+    <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
   </div>
 </header>
 
 <div class="login-wrap hidden" id="login-view">
   <div class="login-card">
     <h1>灵感花园</h1>
-    <p>输入邮箱,花园会寄一个登录码给你(免密码)。</p>
+    <p>用邮箱 + 密码登录。第一次没有密码?用下面的邮件链接先进来,再设密码。</p>
     <input type="email" id="login-email" placeholder="你的邮箱" autocomplete="email">
-    <button class="primary" id="btn-magic" style="width:100%">发送登录码</button>
-    <div id="otp-box" class="hidden" style="margin-top:14px">
-      <input type="text" id="login-code" placeholder="输入邮件里的 6 位码" inputmode="numeric" autocomplete="one-time-code" style="text-align:center;letter-spacing:4px">
-      <button class="primary" id="btn-verify" style="width:100%;margin-top:10px">进入花园</button>
-    </div>
+    <input type="password" id="login-pass" placeholder="密码" autocomplete="current-password" style="margin-top:10px">
+    <button class="primary" id="btn-pass" style="width:100%;margin-top:12px">登录</button>
     <p class="muted" id="login-msg" style="margin-top:14px"></p>
-    <p class="muted" style="margin-top:8px;font-size:12px">也可以直接点邮件里的链接登录。装到主屏后,登录一次就能长期保持。</p>
+    <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">
+      <button class="ghost" id="btn-magic" style="width:100%">第一次?发一封邮件链接给我</button>
+      <div id="otp-box" class="hidden" style="margin-top:10px">
+        <input type="text" id="login-code" placeholder="或输入邮件里的 6 位码" inputmode="numeric" autocomplete="one-time-code" style="text-align:center;letter-spacing:4px">
+        <button id="btn-verify" style="width:100%;margin-top:8px">用验证码进入</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -227,6 +230,35 @@ async function verifyCode(){
   const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
   if (error) $('#login-msg').textContent = '码不对或已过期:' + error.message;
   // 成功后 onAuthStateChange 会自动进入花园
+}
+async function passLogin(){
+  const email = $('#login-email').value.trim(), password = $('#login-pass').value;
+  if (!email || !password){ $('#login-msg').textContent = '请输入邮箱和密码'; return; }
+  $('#login-msg').textContent = '登录中…';
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) $('#login-msg').textContent = '登录失败:' + error.message + '(第一次请点下面的邮件链接)';
+  // 成功后 onAuthStateChange 自动进入
+}
+function setPassword(){
+  if (document.querySelector('.modal-mask')) return;
+  document.body.insertAdjacentHTML('beforeend', `
+   <div class="modal-mask"><div class="modal" style="max-width:420px">
+    <div class="spread"><b>设置登录密码</b><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
+    <p class="muted" style="margin:10px 0">设一个密码,以后在手机上用「邮箱 + 密码」直接登录,不用再等邮件。</p>
+    <input type="password" id="np" placeholder="新密码(至少 6 位)" autocomplete="new-password">
+    <button class="primary" id="np-save" style="width:100%;margin-top:12px">保存密码</button>
+    <p class="muted" id="np-msg" style="margin-top:10px"></p>
+   </div></div>`);
+  const mask = document.querySelector('.modal-mask');
+  mask.querySelector('[data-mclose]').onclick = () => mask.remove();
+  mask.addEventListener('click', ev => { if (ev.target===mask) mask.remove(); });
+  mask.querySelector('#np-save').onclick = async () => {
+    const p = mask.querySelector('#np').value.trim();
+    if (p.length < 6){ mask.querySelector('#np-msg').textContent = '密码至少 6 位'; return; }
+    const { error } = await sb.auth.updateUser({ password: p });
+    mask.querySelector('#np-msg').textContent = error ? ('没设成:' + error.message) : '密码已设置!以后手机上用邮箱 + 密码登录 🌱';
+    if (!error) setTimeout(() => mask.remove(), 1600);
+  };
 }
 
 /* ================= 路由 ================= */
@@ -920,10 +952,12 @@ VIEWS.review = async function(){
 
 /* ================= 启动 ================= */
 window.addEventListener('hashchange', route);
+$('#btn-pass').onclick = passLogin;
+$('#login-pass').addEventListener('keydown', e => { if (e.key==='Enter') passLogin(); });
 $('#btn-magic').onclick = sendMagic;
-$('#login-email').addEventListener('keydown', e => { if (e.key==='Enter') sendMagic(); });
 $('#btn-verify').onclick = verifyCode;
 $('#login-code').addEventListener('keydown', e => { if (e.key==='Enter') verifyCode(); });
+$('#btn-setpass').onclick = setPassword;
 $('#btn-logout').onclick = async () => { await sb?.auth.signOut(); toast('下次见'); };
 initAuth();
 </script>
