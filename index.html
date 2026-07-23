@@ -2,9 +2,15 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>灵感花园 · Insight Garden</title>
 <meta name="description" content="慢慢看见自己靠近了什么">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2f4a3c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="灵感花园">
+<link rel="apple-touch-icon" href="icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -124,10 +130,15 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
 <div class="login-wrap hidden" id="login-view">
   <div class="login-card">
     <h1>灵感花园</h1>
-    <p>输入邮箱,花园会寄一把钥匙给你(魔法链接,免密码)。</p>
-    <input type="email" id="login-email" placeholder="你的邮箱">
-    <button class="primary" id="btn-magic" style="width:100%">发送登录链接</button>
+    <p>输入邮箱,花园会寄一个登录码给你(免密码)。</p>
+    <input type="email" id="login-email" placeholder="你的邮箱" autocomplete="email">
+    <button class="primary" id="btn-magic" style="width:100%">发送登录码</button>
+    <div id="otp-box" class="hidden" style="margin-top:14px">
+      <input type="text" id="login-code" placeholder="输入邮件里的 6 位码" inputmode="numeric" autocomplete="one-time-code" style="text-align:center;letter-spacing:4px">
+      <button class="primary" id="btn-verify" style="width:100%;margin-top:10px">进入花园</button>
+    </div>
     <p class="muted" id="login-msg" style="margin-top:14px"></p>
+    <p class="muted" style="margin-top:8px;font-size:12px">也可以直接点邮件里的链接登录。装到主屏后,登录一次就能长期保持。</p>
   </div>
 </div>
 
@@ -203,7 +214,19 @@ async function sendMagic(){
   if (!email) return;
   $('#login-msg').textContent = '寄送中…';
   const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-  $('#login-msg').textContent = error ? ('没寄出去:' + error.message) : '钥匙已寄出,去邮箱点开那封信就能进来。';
+  if (error){ $('#login-msg').textContent = '没寄出去:' + error.message; return; }
+  $('#otp-box').classList.remove('hidden');
+  $('#login-msg').textContent = '已寄出。把邮件里的 6 位码填进来,或直接点邮件里的链接。';
+  $('#login-code').focus();
+}
+async function verifyCode(){
+  const email = $('#login-email').value.trim();
+  const token = $('#login-code').value.trim();
+  if (!email || !token) return;
+  $('#login-msg').textContent = '验证中…';
+  const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+  if (error) $('#login-msg').textContent = '码不对或已过期:' + error.message;
+  // 成功后 onAuthStateChange 会自动进入花园
 }
 
 /* ================= 路由 ================= */
@@ -899,6 +922,8 @@ VIEWS.review = async function(){
 window.addEventListener('hashchange', route);
 $('#btn-magic').onclick = sendMagic;
 $('#login-email').addEventListener('keydown', e => { if (e.key==='Enter') sendMagic(); });
+$('#btn-verify').onclick = verifyCode;
+$('#login-code').addEventListener('keydown', e => { if (e.key==='Enter') verifyCode(); });
 $('#btn-logout').onclick = async () => { await sb?.auth.signOut(); toast('下次见'); };
 initAuth();
 </script>
