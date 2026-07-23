@@ -302,8 +302,9 @@ VIEWS.today = async function(){
   const energy = ds?.energy || 'mid';
 
   // 每日固定待办:按能量定数量、至多 1 颗灵感种子;完成显示"已完成",不再往上顶新的
-  const snoozed = (ds?.actions?.snoozed) || [];
-  const doneToday = (ds?.actions?.done) || [];
+  let acts = ds?.actions || {};
+  const snoozed = acts.snoozed || [];
+  const doneToday = acts.done || [];
   const notSnoozed = arr => arr.filter(x => !snoozed.includes(x.sid));
   const dueLang = (langAll||[]).filter(i => !i.last_reviewed_at ||
     (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000);
@@ -315,17 +316,15 @@ VIEWS.today = async function(){
   const energyLabel = {low:'低能量',mid:'中等能量',high:'高能量'}[energy];
   const pickOne = arr => arr.length ? arr[Math.floor(Math.random()*arr.length)] : null;
   // 只在每天第一次(或能量变化时)选一次,之后固定不变
-  let todo = ds?.actions?.todo;
-  if (!Array.isArray(todo) || ds?.actions?.todoEnergy !== energy){
+  let todo = acts.todo;
+  if (!Array.isArray(todo) || acts.todoEnergy !== energy){
     const others = interleave([projCands, langCands]);        // 项目 + 到期语言
     const seed = pickOne(seedCands);                           // 至多 1 颗灵感种子
     const list = seed ? [seed] : [];
     for (const o of others){ if (list.length >= energyNeed) break; list.push(o); }
     todo = list.slice(0, energyNeed);
-    const cur = ds?.actions || {};
-    const actions = { ...cur, todo, todoEnergy: energy };
-    await q(sb.from('daily_state').upsert({ date: today, energy, actions, updated_at: new Date().toISOString() }), true);
-    ds = { ...(ds||{}), energy, actions };
+    acts = { ...acts, todo, todoEnergy: energy };
+    await q(sb.from('daily_state').upsert({ date: today, energy, actions: acts, updated_at: new Date().toISOString() }), true);
   }
   const doneCount = todo.filter(x => doneToday.includes(x.sid)).length;
   const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" style="flex:1;text-align:left"><b>${label}</b><br><span class="muted" style="font-size:12px">${tip}</span></button>`;
@@ -359,25 +358,23 @@ VIEWS.today = async function(){
           : `早报还没送到过。Claude 每天早上 8 点会扫一遍邮箱,把值得看的放在这里。`}
     </div>`;
   document.querySelectorAll('[data-energy]').forEach(btn => btn.onclick = async () => {
-    const cur = ds?.actions || {};
-    await q(sb.from('daily_state').upsert({ date: today, energy: btn.dataset.energy, actions: { ...cur, todo: null, todoEnergy: null }, updated_at: new Date().toISOString() }));
+    await q(sb.from('daily_state').upsert({ date: today, energy: btn.dataset.energy, actions: { ...acts, todo: null, todoEnergy: null }, updated_at: new Date().toISOString() }));
     toast('记下了,按这个步幅重新端菜'); route();
   });
   document.querySelectorAll('[data-done]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation();
-    const sid = b.dataset.done; const cur = ds?.actions || {};
-    const was = (cur.done||[]).includes(sid);
-    const dn = was ? (cur.done||[]).filter(x=>x!==sid) : [ ...(cur.done||[]), sid ];
-    await q(sb.from('daily_state').upsert({ date: today, energy: ds?.energy||'mid', actions: { ...cur, done: dn }, updated_at: new Date().toISOString() }));
+    const sid = b.dataset.done;
+    const was = (acts.done||[]).includes(sid);
+    const dn = was ? (acts.done||[]).filter(x=>x!==sid) : [ ...(acts.done||[]), sid ];
+    await q(sb.from('daily_state').upsert({ date: today, energy, actions: { ...acts, done: dn }, updated_at: new Date().toISOString() }));
     if (!was) toast('照料好了 ✓'); route();
   });
   document.querySelectorAll('[data-dismiss]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation();
     const sid = b.dataset.dismiss; if (!sid) return;
-    const cur = ds?.actions || {};
-    const sn = cur.snoozed || []; if (!sn.includes(sid)) sn.push(sid);
-    const t = (cur.todo || todo).filter(x => x.sid !== sid);
-    await q(sb.from('daily_state').upsert({ date: today, energy: ds?.energy||'mid', actions: { ...cur, snoozed: sn, todo: t }, updated_at: new Date().toISOString() }));
+    const sn = acts.snoozed || []; if (!sn.includes(sid)) sn.push(sid);
+    const t = (acts.todo || todo).filter(x => x.sid !== sid);
+    await q(sb.from('daily_state').upsert({ date: today, energy, actions: { ...acts, snoozed: sn, todo: t }, updated_at: new Date().toISOString() }));
     toast('今天先不看它，明天再回来 🌙'); route();
   });
   document.querySelectorAll('[data-go]').forEach(c => c.onclick = (ev) => {
