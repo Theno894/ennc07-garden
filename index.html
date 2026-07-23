@@ -101,6 +101,8 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
 .timeline .ev::before{content:'';position:absolute;left:-19px;top:12px;width:8px;height:8px;border-radius:50%;background:var(--done)}
 .itemline{border-top:1px dashed var(--line);padding:10px 0;display:flex;gap:10px;align-items:flex-start;justify-content:space-between}
 .itemline:first-of-type{border-top:none}
+.itemline.click{cursor:pointer;border-radius:8px}
+.itemline.click:hover{background:var(--paper)}
 .exp{font-weight:500}
 .small-in{width:auto;flex:1}
 @media (max-width:760px){ nav.desk{display:none} nav.mob{display:block} main{padding-top:24px} }
@@ -329,9 +331,13 @@ VIEWS.capture = async function(){
     const k = kind || guess(text);
     if (k === '英语' || k === '日语'){
       const lang = k === '英语' ? 'en' : 'ja';
-      await q(sb.from('lang_items').insert({ lang, expression: text, source: 'manual' }));
+      const { data: ins } = await sb.from('lang_items').insert({ lang, expression: text, source: 'manual' }).select().single();
       await bumpCheckin(lang, 1);
-      toast(k + '表达已收进温室 🌱');
+      toast(k + '表达已收进温室，AI 补释义中… 🌱');
+      // 后台补释义(不阻塞)
+      if (ins) sb.functions.invoke('garden-ai', { body:{ mode:'lookup', expression: text, lang, direction:'forward' } })
+        .then(({ data }) => { if (data?.card){ const c=data.card; const meaning=[c.pron,c.pos,c.meaning].filter(Boolean).join(' '); const example=[c.example,c.example_cn].filter(Boolean).join(' / '); sb.from('lang_items').update({ meaning: meaning||null, example: example||null }).eq('id', ins.id); } })
+        .catch(()=>{});
     } else {
       await q(sb.from('entries').insert({ kind: k, content: text, title: text.slice(0, 24), status: 'seed' }));
       toast('已种下,先安静待在「' + k + '」里');
@@ -437,7 +443,7 @@ async function recomputeProgress(id){
   const prog = Math.round(tasks.filter(t=>t.done).length / tasks.length * 100);
   await q(sb.from('projects').update({ progress: prog, status: prog>=100?'done':'growing', updated_at: new Date().toISOString() }).eq('id', id));
 }
-function closeModal(refresh){ const m = document.querySelector('.modal-mask'); if (m) m.remove(); if (refresh) VIEWS.projects(); }
+function closeModal(refresh){ const m = document.querySelector('.modal-mask'); if (m) m.remove(); if (refresh) route(); }
 async function openProject(id){
   const [p, ups, tasks] = await Promise.all([
     q(sb.from('projects').select('*').eq('id', id).maybeSingle()),
@@ -573,23 +579,18 @@ VIEWS.lang = async function(){
     (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000)).slice(0,6);
   const col = lang => {
     const todays = (items||[]).filter(i => i.lang===lang && i.created_at.slice(0,10)===today);
-    const label = lang==='en'?'英语':'日语';
     const fwd = lang==='en'?'英语':'日语';
     return `<div class="card">
-      <div class="spread"><b>${label}</b><span class="muted">今天收了 ${todays.length} 条</span></div>
-      ${todays.map(i=>`<div class="itemline"><div><div class="exp">${esc(i.expression)}</div><div class="muted">${esc(i.meaning||'')}</div></div></div>`).join('')}
-      <div class="row" style="margin-top:12px">
+      <div class="spread"><b>${fwd}</b><span class="muted">今天收了 ${todays.length} 条</span></div>
+      ${todays.map(i=>`<div class="itemline click" data-word="${i.id}"><div><div class="exp">${esc(i.expression)}</div><div class="muted">${esc(i.meaning||'点开补释义')}</div></div><span class="muted">›</span></div>`).join('') || '<div class="muted" style="margin-top:8px;font-size:13px">还没有，查一个词开始 👇</div>'}
+      <div class="row" style="margin-top:14px">
         <span class="chip click sel" data-dir="${lang}" data-d="forward">${fwd}→中</span>
         <span class="chip click" data-dir="${lang}" data-d="reverse">中→${fwd}</span>
       </div>
       <div class="row" style="margin-top:8px">
-        <input class="small-in" id="add-${lang}" placeholder="输入${fwd}词,或切到中→${fwd}输中文">
-        <input class="small-in" id="add-${lang}-m" placeholder="意思(可空)">
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button data-look="${lang}" data-save="0">🔍 AI 查词</button>
-        <button class="primary" data-look="${lang}" data-save="1">✨ 查词并收录</button>
-        <button data-addlang="${lang}">直接收</button>
+        <input class="small-in" id="add-${lang}" placeholder="输入${fwd}词查释义，或切到中→${fwd}">
+        <button class="primary" data-look="${lang}">🔍 查词</button>
+        <button class="ghost" data-manual="${lang}">＋手动</button>
       </div>
       <div id="look-${lang}" class="note hidden" style="margin-top:10px"></div>
       </div>`;
@@ -603,82 +604,112 @@ VIEWS.lang = async function(){
     <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">今天该浇水的(${due.length})</h2>
       ${due.length ? '<button class="primary" id="focus-review">▶ 专注复习</button>' : ''}</div>
     <div class="grid g2">
-      ${due.map(i=>`<div class="card"><div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">浇过 ${i.review_count} 次</span></div>
+      ${due.map(i=>`<div class="card projcard" data-word="${i.id}">
+        <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">浇过 ${i.review_count} 次</span></div>
         <h3>${esc(i.expression)}</h3>
-        <div class="desc hidden" id="mean-${i.id}">${esc(i.meaning||'(还没写过意思——试着自己回想吧)')}${i.example?`<div class="muted" style="font-size:13px;margin-top:4px">${esc(i.example)}</div>`:''}</div>
-        <button class="ghost" data-flip="${i.id}" style="padding-left:0;margin-top:4px">先回想,再翻面看意思 ↺</button>
-        <div class="row" style="margin-top:12px">
-          <button data-forgot="${i.id}" data-c="${i.review_count}">没记住 ↻</button>
-          <button data-rev="${i.id}" data-c="${i.review_count}">记得 ✓</button>
-          <button data-master="${i.id}">已掌握 🌿</button>
-        </div></div>`).join('') || '<div class="card"><div class="desc">今天没有需要浇水的表达,温室很安静。</div></div>'}
+        <div class="tool-hint muted">点开复习 →</div>
+      </div>`).join('') || '<div class="card"><div class="desc">今天没有需要浇水的表达，温室很安静。</div></div>'}
     </div>
     <h2 class="sec">月度收获</h2>
     <div class="${ins?'card':'note'}">${ins ? `<div class="muted">${esc(ins.date)}</div><div class="desc" style="white-space:pre-wrap">${esc(ins.content_md)}</div>` : '月底 Claude 会在这里写一段:你这个月的语言在怎样生长。'}</div>`;
-  document.querySelectorAll('[data-addlang]').forEach(b => b.onclick = async () => {
-    const lang = b.dataset.addlang;
-    const exp = $('#add-'+lang).value.trim(); if (!exp) return;
-    await q(sb.from('lang_items').insert({ lang, expression: exp, meaning: $('#add-'+lang+'-m').value.trim() || null, source:'manual' }));
-    await bumpCheckin(lang, 1); toast('收进温室了 🌱'); route();
-  });
   // 方向切换
   document.querySelectorAll('[data-dir]').forEach(c => c.onclick = () => {
     document.querySelectorAll(`[data-dir="${c.dataset.dir}"]`).forEach(x => x.classList.toggle('sel', x === c));
   });
-  // 保存一张查词卡到温室
-  const saveCard = async (lang, card) => {
-    const meaning = [card.pron, card.pos, card.meaning].filter(Boolean).join(' ');
-    const example = [card.example, card.example_cn].filter(Boolean).join(' / ');
-    await q(sb.from('lang_items').insert({ lang, expression: card.expression || '', meaning: meaning || null, example: example || null, source:'manual' }));
-    await bumpCheckin(lang, 1);
-  };
-  // AI 查词
+  // 点任意词 → 统一词卡
+  document.querySelectorAll('[data-word]').forEach(el => el.onclick = () => openWord(el.dataset.word));
+  // 手动加(不查AI)
+  document.querySelectorAll('[data-manual]').forEach(b => b.onclick = async () => {
+    const lang = b.dataset.manual;
+    const exp = $('#add-'+lang).value.trim(); if (!exp) return toast('先输入一个词');
+    const m = prompt('意思(可留空,之后可 AI 补):', ''); if (m === null) return;
+    await q(sb.from('lang_items').insert({ lang, expression: exp, meaning: m || null, source:'manual' }));
+    await bumpCheckin(lang, 1); toast('收进温室了 🌱'); route();
+  });
+  // AI 查词 → 就地显示释义卡
   document.querySelectorAll('[data-look]').forEach(b => b.onclick = async () => {
-    const lang = b.dataset.look, autoSave = b.dataset.save === '1';
+    const lang = b.dataset.look;
     const expr = $('#add-'+lang).value.trim();
     if (!expr) return toast('先输入要查的词');
     const dir = document.querySelector(`[data-dir="${lang}"].sel`)?.dataset.d || 'forward';
     const box = $('#look-'+lang);
-    const btns = document.querySelectorAll(`[data-look="${lang}"]`);
-    btns.forEach(x => x.disabled = true);
-    box.classList.remove('hidden'); box.textContent = '查词中…';
+    b.disabled = true; box.classList.remove('hidden'); box.textContent = '查词中…';
     try {
       const { data, error } = await sb.functions.invoke('garden-ai', { body: { mode:'lookup', expression: expr, lang, direction: dir } });
       if (error) throw new Error((await error.context?.json?.())?.error || error.message);
       if (data?.error) throw new Error(data.error);
       const c = data.card;
-      if (autoSave){
-        await saveCard(lang, c); toast('查好并收进温室 🌱'); route(); return;
-      }
       box.innerHTML = `<div class="exp" style="font-size:16px">${esc(c.expression||expr)} <span class="muted" style="font-weight:400">${esc([c.pron,c.pos].filter(Boolean).join(' '))}</span></div>
         <div style="margin:6px 0">${esc(c.meaning||'')}</div>
-        ${c.example?`<div class="muted" style="font-size:13px">例:${esc(c.example)}${c.example_cn?'<br>'+esc(c.example_cn):''}</div>`:''}
+        ${c.example?`<div class="muted" style="font-size:13px">例：${esc(c.example)}${c.example_cn?'<br>'+esc(c.example_cn):''}</div>`:''}
         ${c.note?`<div class="muted" style="font-size:12.5px;margin-top:6px">💡 ${esc(c.note)}</div>`:''}
         <div class="row" style="margin-top:10px"><button class="primary" id="save-${lang}">收进温室</button><button class="ghost" id="close-${lang}">不收了</button></div>`;
       $('#save-'+lang).onclick = async () => { await saveCard(lang, c); toast('收进温室了 🌱'); route(); };
       $('#close-'+lang).onclick = () => { box.classList.add('hidden'); box.innerHTML=''; };
     } catch (e) {
-      box.textContent = '查词失败:' + e.message;
+      box.textContent = '查词失败：' + e.message;
     }
-    btns.forEach(x => x.disabled = false);
-  });
-  document.querySelectorAll('[data-flip]').forEach(b => b.onclick = () => {
-    document.getElementById('mean-' + b.dataset.flip).classList.remove('hidden'); b.remove();
-  });
-  document.querySelectorAll('[data-rev]').forEach(b => b.onclick = async () => {
-    await q(sb.from('lang_items').update({ review_count: parseInt(b.dataset.c)+1, last_reviewed_at: new Date().toISOString() }).eq('id', b.dataset.rev));
-    toast('浇过水了'); route();
-  });
-  document.querySelectorAll('[data-forgot]').forEach(b => b.onclick = async () => {
-    await q(sb.from('lang_items').update({ review_count: 0, last_reviewed_at: new Date().toISOString() }).eq('id', b.dataset.forgot));
-    toast('没关系,过几天再见它 ↻'); route();
-  });
-  document.querySelectorAll('[data-master]').forEach(b => b.onclick = async () => {
-    await q(sb.from('lang_items').update({ mastered: true }).eq('id', b.dataset.master));
-    toast('这颗已经长成 🌿'); route();
+    b.disabled = false;
   });
   $('#focus-review') && ($('#focus-review').onclick = () => startReview(due));
 };
+// 保存一张查词卡到温室
+async function saveCard(lang, card){
+  const meaning = [card.pron, card.pos, card.meaning].filter(Boolean).join(' ');
+  const example = [card.example, card.example_cn].filter(Boolean).join(' / ');
+  await q(sb.from('lang_items').insert({ lang, expression: card.expression || '', meaning: meaning || null, example: example || null, source:'manual' }));
+  await bumpCheckin(lang, 1);
+}
+// 统一词卡:看释义 + 就地复习 + 编辑/重查/删除
+async function openWord(id){
+  const { data: i } = await sb.from('lang_items').select('*').eq('id', id).maybeSingle();
+  if (!i) return;
+  closeModal(false);
+  document.body.insertAdjacentHTML('beforeend', `
+   <div class="modal-mask"><div class="modal" style="max-width:520px">
+    <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}${i.mastered?' · 已长成':''}</span><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
+    <h2>${esc(i.expression)}</h2>
+    <div style="margin:8px 0">${esc(i.meaning||'(还没有释义，点「AI 重查」补上)')}</div>
+    ${i.example?`<div class="muted" style="font-size:13.5px">${esc(i.example)}</div>`:''}
+    <div class="muted" style="font-size:12px;margin-top:8px">浇过 ${i.review_count} 次</div>
+    <div class="row" style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
+      <button data-wr="forgot">没记住 ↻</button>
+      <button class="primary" data-wr="remembered">记得 ✓</button>
+      <button data-wr="mastered">已长成 🌿</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="ghost" data-wedit>✎ 编辑</button>
+      <button class="ghost" data-wlook>🔄 AI 重查</button>
+      <button class="ghost" data-wdel style="color:var(--danger)">删除</button>
+    </div>
+   </div></div>`);
+  const mask = document.querySelector('.modal-mask');
+  mask.addEventListener('click', ev => { if (ev.target === mask) closeModal(true); });
+  mask.querySelector('[data-mclose]').onclick = () => closeModal(true);
+  mask.querySelectorAll('[data-wr]').forEach(b => b.onclick = async () => {
+    await srsMark(i, b.dataset.wr);
+    toast(b.dataset.wr==='forgot'?'没关系，过几天再见它 ↻':b.dataset.wr==='mastered'?'这颗已经长成 🌿':'浇过水了 ✓');
+    closeModal(true);
+  });
+  mask.querySelector('[data-wedit]').onclick = async () => {
+    const m = prompt('释义：', i.meaning||''); if (m === null) return;
+    const e = prompt('例句(可空)：', i.example||'');
+    await q(sb.from('lang_items').update({ meaning: m||null, example: (e===null?i.example:e)||null }).eq('id', id));
+    openWord(id);
+  };
+  mask.querySelector('[data-wlook]').onclick = async () => {
+    const btn = mask.querySelector('[data-wlook]'); btn.textContent = '查询中…'; btn.disabled = true;
+    try {
+      const { data } = await sb.functions.invoke('garden-ai', { body:{ mode:'lookup', expression:i.expression, lang:i.lang, direction:'forward' } });
+      if (data?.card){ const c=data.card; const meaning=[c.pron,c.pos,c.meaning].filter(Boolean).join(' '); const example=[c.example,c.example_cn].filter(Boolean).join(' / '); await q(sb.from('lang_items').update({ meaning: meaning||i.meaning, example: example||i.example }).eq('id', id)); }
+    } catch (e) { /* ignore */ }
+    openWord(id);
+  };
+  mask.querySelector('[data-wdel]').onclick = async () => {
+    if (!confirm('删除「'+i.expression+'」？')) return;
+    await q(sb.from('lang_items').delete().eq('id', id)); toast('已删除'); closeModal(true);
+  };
+}
 
 /* 专注复习:一次一张卡 */
 async function srsMark(i, kind){
@@ -701,7 +732,7 @@ function startReview(list){
       <div class="row" style="justify-content:center">
         <button data-r="forgot">没记住 ↻</button>
         <button data-r="remembered">记得 ✓</button>
-        <button data-r="mastered">已掌握 🌿</button>
+        <button data-r="mastered">已长成 🌿</button>
       </div>
      </div></div>`);
     const mask = document.querySelector('.modal-mask');
