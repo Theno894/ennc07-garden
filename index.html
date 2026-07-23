@@ -201,18 +201,38 @@ async function route(){
 /* ================= 今日 ================= */
 VIEWS.today = async function(){
   const today = todayStr();
-  const [ds, projs, seeds, checkins, brief] = await Promise.all([
+  const [ds, projs, seeds, checkins, brief, langAll] = await Promise.all([
     q(sb.from('daily_state').select('*').eq('date', today).maybeSingle(), true),
-    q(sb.from('projects').select('*').eq('status','growing').order('updated_at',{ascending:false}).limit(3)),
-    q(sb.from('entries').select('*').in('status',['seed','growing']).order('updated_at',{ascending:false}).limit(3)),
+    q(sb.from('projects').select('*').eq('status','growing').order('updated_at',{ascending:false})),
+    q(sb.from('entries').select('*').in('status',['seed','growing']).order('updated_at',{ascending:false})),
     q(sb.from('lang_checkins').select('*').eq('date', today)),
     q(sb.from('mail_briefs').select('*').order('date',{ascending:false}).limit(1)),
+    q(sb.from('lang_items').select('*').eq('mastered', false)),
   ]);
-  const three = [...(projs||[]).map(p=>({t:'项目', title:p.name, desc:p.next_step||p.description||'', st:p.status})),
-                 ...(seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), desc:e.next_step||'', st:e.status}))].slice(0,3);
   const en = (checkins||[]).find(c=>c.lang==='en'), ja = (checkins||[]).find(c=>c.lang==='ja');
   const b = (brief||[])[0];
-  const energy = ds?.energy;
+  const energy = ds?.energy || 'mid';
+
+  // 能量三档:低=轻/少,中=平衡,高=重/多。heavy: 0 轻 / 1 中 / 2 重
+  const dueLang = (langAll||[]).filter(i => !i.last_reviewed_at ||
+    (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000);
+  const projCands = (projs||[]).map(p=>({t:'项目', title:p.name, desc:p.next_step||p.description||'', st:p.status, heavy: p.progress<50?2:(p.progress<80?1:0)}));
+  const seedCands = (seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), desc:e.next_step||'', st:e.status, heavy:1}));
+  const langCands = dueLang.map(i=>({t:i.lang==='en'?'英语':'日语', title:i.expression, desc:'复习:'+(i.meaning||'轻轻回想一下'), st:'growing', heavy:0}));
+  const interleave = arrs => { const out=[]; for(let i=0;out.length<50;i++){ let any=false; for(const a of arrs){ if(a[i]){ out.push(a[i]); any=true; } } if(!any) break; } return out; };
+  let three, energyNeed;
+  if (energy==='low'){
+    energyNeed = 2;
+    three = [...langCands, ...projCands.filter(x=>x.heavy===0), ...seedCands].slice(0,2);
+    if (!three.length) three = [...projCands, ...seedCands].slice(0,2);
+  } else if (energy==='high'){
+    energyNeed = 5;
+    three = [...projCands, ...seedCands, ...langCands].sort((a,b)=>b.heavy-a.heavy).slice(0,5);
+  } else {
+    energyNeed = 3;
+    three = interleave([projCands, seedCands, langCands]).slice(0,3);
+  }
+  const energyLabel = {low:'低能量',mid:'中等能量',high:'高能量'}[energy];
   const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" style="flex:1;text-align:left"><b>${label}</b><br><span class="muted" style="font-size:12px">${tip}</span></button>`;
   $('#view').innerHTML = `
     <div class="eyebrow">${esc(greeting())}</div>
@@ -229,9 +249,10 @@ VIEWS.today = async function(){
         </div>
       </div>
     </div>
-    <h2 class="sec">此刻值得照料的${three.length ? '' : '——花园还空着'}</h2>
+    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">此刻值得照料的${three.length ? '' : '——花园还空着'}</h2>
+      <span class="muted">按 ${energyLabel} · 今天端上 ${three.length}/${energyNeed} 件</span></div>
     <div class="grid g3">
-      ${three.map((x,i)=>`<div class="card"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${chip(x.st)}</div>
+      ${three.map((x,i)=>`<div class="card"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}${x.heavy===2?' · 硬骨头':x.heavy===0?' · 轻':''}</span>${chip(x.st)}</div>
         <h3>${esc(x.title)}</h3><div class="desc">${esc(x.desc)||'<span class="muted">下一步还没写下</span>'}</div></div>`).join('')
         || '<div class="card"><div class="desc">去「捕捉」写下第一句,或在「项目」里种一个开始。</div></div>'}
     </div>
