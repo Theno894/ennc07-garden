@@ -208,6 +208,7 @@ async function sendMagic(){
 
 /* ================= 路由 ================= */
 const VIEWS = {};
+const langUI = { libOpen:false, q:'', filter:'全部', sort:'recent' };  // 词库 UI 状态(跨渲染保留)
 async function route(){
   if (!session) return;
   renderNav();
@@ -577,12 +578,14 @@ VIEWS.lang = async function(){
   ]);
   const due = (items||[]).filter(i => !i.mastered && (!i.last_reviewed_at ||
     (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000)).slice(0,6);
+  const mastered = (items||[]).filter(i => i.mastered);
+  const totalN = (items||[]).length;
   const col = lang => {
-    const todays = (items||[]).filter(i => i.lang===lang && i.created_at.slice(0,10)===today);
     const fwd = lang==='en'?'英语':'日语';
+    const recent = (items||[]).filter(i => i.lang===lang).slice(0,4);
     return `<div class="card">
-      <div class="spread"><b>${fwd}</b><span class="muted">今天收了 ${todays.length} 条</span></div>
-      ${todays.map(i=>`<div class="itemline click" data-word="${i.id}"><div><div class="exp">${esc(i.expression)}</div><div class="muted">${esc(i.meaning||'点开补释义')}</div></div><span class="muted">›</span></div>`).join('') || '<div class="muted" style="margin-top:8px;font-size:13px">还没有，查一个词开始 👇</div>'}
+      <div class="spread"><b>${fwd}</b><span class="muted">最近收的</span></div>
+      ${recent.map(i=>`<div class="itemline click" data-word="${i.id}"><div><div class="exp">${esc(i.expression)}</div><div class="muted">${esc((i.meaning||'点开补释义').slice(0,40))}</div></div><span class="muted">›</span></div>`).join('') || '<div class="muted" style="margin-top:8px;font-size:13px">还没有，查一个词开始 👇</div>'}
       <div class="row" style="margin-top:14px">
         <span class="chip click sel" data-dir="${lang}" data-d="forward">${fwd}→中</span>
         <span class="chip click" data-dir="${lang}" data-d="reverse">中→${fwd}</span>
@@ -599,7 +602,11 @@ VIEWS.lang = async function(){
   $('#view').innerHTML = `
     <div class="eyebrow">语言温室</div>
     <h1 class="hero">已经连续生长 ${streak} 天</h1>
-    <p class="sub">每一条表达都是一颗种子;复习是浇水,不是考试。</p>
+    <div class="row" style="gap:24px;margin:2px 0 24px">
+      <span class="muted"><b style="color:var(--ink);font-size:19px">${totalN}</b> 个词</span>
+      <span class="muted"><b style="color:var(--done);font-size:19px">${mastered.length}</b> 已长成</span>
+      <span class="muted"><b style="color:var(--grow);font-size:19px">${due.length}</b> 待复习</span>
+    </div>
     <div class="grid g2">${col('en')}${col('ja')}</div>
     <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">今天该浇水的(${due.length})</h2>
       ${due.length ? '<button class="primary" id="focus-review">▶ 专注复习</button>' : ''}</div>
@@ -610,8 +617,45 @@ VIEWS.lang = async function(){
         <div class="tool-hint muted">点开复习 →</div>
       </div>`).join('') || '<div class="card"><div class="desc">今天没有需要浇水的表达，温室很安静。</div></div>'}
     </div>
+    ${mastered.length ? `<h2 class="sec">已长成 🌿 (${mastered.length})</h2>
+      <div class="card"><div class="row">${mastered.slice(0,40).map(i=>`<span class="chip click" data-word="${i.id}">${esc(i.expression)}</span>`).join('')}</div></div>` : ''}
+    <div class="spread" style="margin:34px 0 10px"><h2 class="sec" style="margin:0">我的词库 (${totalN})</h2>
+      <button id="lib-toggle">${langUI.libOpen?'收起 ▲':'展开 ▼'}</button></div>
+    <div id="lib-wrap" class="${langUI.libOpen?'':'hidden'}"><div class="card">
+      <input class="small-in" id="lib-q" placeholder="搜索词或释义…" value="${esc(langUI.q)}" style="width:100%;margin-bottom:12px">
+      <div class="row" style="margin-bottom:12px">
+        ${['全部','英语','日语','待复习','已长成'].map(f=>`<span class="chip click ${langUI.filter===f?'sel':''}" data-lf="${f}">${f}</span>`).join('')}
+        <select id="lib-sort" class="small-in" style="max-width:130px;margin-left:auto">
+          <option value="recent">最近收的</option><option value="stale">最久没复习</option><option value="alpha">字母序</option>
+        </select>
+      </div>
+      <div id="lib-list"></div>
+    </div></div>
     <h2 class="sec">月度收获</h2>
     <div class="${ins?'card':'note'}">${ins ? `<div class="muted">${esc(ins.date)}</div><div class="desc" style="white-space:pre-wrap">${esc(ins.content_md)}</div>` : '月底 Claude 会在这里写一段:你这个月的语言在怎样生长。'}</div>`;
+  // 词库:客户端筛选/搜索/排序
+  const renderLib = () => {
+    let list = (items||[]).slice();
+    const f = langUI.filter;
+    if (f==='英语') list = list.filter(i=>i.lang==='en');
+    else if (f==='日语') list = list.filter(i=>i.lang==='ja');
+    else if (f==='待复习') list = list.filter(i=> due.some(d=>d.id===i.id));
+    else if (f==='已长成') list = list.filter(i=>i.mastered);
+    const query = langUI.q.trim().toLowerCase();
+    if (query) list = list.filter(i=> (i.expression||'').toLowerCase().includes(query) || (i.meaning||'').toLowerCase().includes(query));
+    if (langUI.sort==='alpha') list.sort((a,b)=>(a.expression||'').localeCompare(b.expression||''));
+    else if (langUI.sort==='stale') list.sort((a,b)=> new Date(a.last_reviewed_at||0) - new Date(b.last_reviewed_at||0));
+    else list.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
+    const el = $('#lib-list'); if (!el) return;
+    el.innerHTML = list.map(i=>`<div class="itemline click" data-word="${i.id}"><div><div class="exp">${esc(i.expression)} <span class="muted" style="font-size:11px">${i.lang==='en'?'EN':'JA'}${i.mastered?' · 已长成':''}</span></div><div class="muted">${esc((i.meaning||'').slice(0,50))}</div></div><span class="muted">›</span></div>`).join('') || '<div class="muted" style="padding:8px 0">没有匹配的词。</div>';
+    el.querySelectorAll('[data-word]').forEach(x => x.onclick = () => openWord(x.dataset.word));
+  };
+  $('#lib-sort') && ($('#lib-sort').value = langUI.sort);
+  $('#lib-toggle') && ($('#lib-toggle').onclick = () => { langUI.libOpen = !langUI.libOpen; $('#lib-wrap').classList.toggle('hidden', !langUI.libOpen); $('#lib-toggle').textContent = langUI.libOpen?'收起 ▲':'展开 ▼'; if (langUI.libOpen) renderLib(); });
+  $('#lib-q') && ($('#lib-q').oninput = e => { langUI.q = e.target.value; renderLib(); });
+  document.querySelectorAll('[data-lf]').forEach(c => c.onclick = () => { langUI.filter = c.dataset.lf; document.querySelectorAll('[data-lf]').forEach(x=>x.classList.toggle('sel', x===c)); renderLib(); });
+  $('#lib-sort') && ($('#lib-sort').onchange = e => { langUI.sort = e.target.value; renderLib(); });
+  if (langUI.libOpen) renderLib();
   // 方向切换
   document.querySelectorAll('[data-dir]').forEach(c => c.onclick = () => {
     document.querySelectorAll(`[data-dir="${c.dataset.dir}"]`).forEach(x => x.classList.toggle('sel', x === c));
