@@ -233,9 +233,9 @@ VIEWS.today = async function(){
   // 能量三档:低=轻/少,中=平衡,高=重/多。heavy: 0 轻 / 1 中 / 2 重
   const dueLang = (langAll||[]).filter(i => !i.last_reviewed_at ||
     (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000);
-  const projCands = (projs||[]).map(p=>({t:'项目', title:p.name, desc:p.next_step||p.description||'', st:p.status, heavy: p.progress<50?2:(p.progress<80?1:0)}));
-  const seedCands = (seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), desc:e.next_step||'', st:e.status, heavy:1}));
-  const langCands = dueLang.map(i=>({t:i.lang==='en'?'英语':'日语', title:i.expression, desc:'复习:'+(i.meaning||'轻轻回想一下'), st:'growing', heavy:0}));
+  const projCands = (projs||[]).map(p=>({t:'项目', title:p.name, desc:p.next_step||p.description||'', st:p.status, heavy: p.progress<50?2:(p.progress<80?1:0), go:'proj', gid:p.id}));
+  const seedCands = (seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), desc:e.next_step||'', st:e.status, heavy:1, go:'grow'}));
+  const langCands = dueLang.map(i=>({t:i.lang==='en'?'英语':'日语', title:i.expression, desc:'复习:'+(i.meaning?'点过去翻面回想':'轻轻回想一下'), st:'growing', heavy:0, go:'lang'}));
   const interleave = arrs => { const out=[]; for(let i=0;out.length<50;i++){ let any=false; for(const a of arrs){ if(a[i]){ out.push(a[i]); any=true; } } if(!any) break; } return out; };
   let three, energyNeed;
   if (energy==='low'){
@@ -261,16 +261,17 @@ VIEWS.today = async function(){
       </div>
       <div class="card"><div class="spread"><div class="muted">语言温室 · 今日</div><a href="#lang" class="muted">去打卡 →</a></div>
         <div class="row" style="margin-top:14px">
-          <span class="chip ${en?'done':''}"><span class="dot"></span>英语 ${en?`已收 ${en.items_added} 条`:'还没浇水'}</span>
-          <span class="chip ${ja?'done':''}"><span class="dot"></span>日语 ${ja?`已收 ${ja.items_added} 条`:'还没浇水'}</span>
+          <a href="#lang"><span class="chip click ${en?'done':''}"><span class="dot"></span>英语 ${en?`已收 ${en.items_added} 条`:'还没浇水'}</span></a>
+          <a href="#lang"><span class="chip click ${ja?'done':''}"><span class="dot"></span>日语 ${ja?`已收 ${ja.items_added} 条`:'还没浇水'}</span></a>
         </div>
       </div>
     </div>
     <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">此刻值得照料的${three.length ? '' : '——花园还空着'}</h2>
       <span class="muted">按 ${energyLabel} · 今天端上 ${three.length}/${energyNeed} 件</span></div>
     <div class="grid g3">
-      ${three.map((x,i)=>`<div class="card"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}${x.heavy===2?' · 硬骨头':x.heavy===0?' · 轻':''}</span>${chip(x.st)}</div>
-        <h3>${esc(x.title)}</h3><div class="desc">${esc(x.desc)||'<span class="muted">下一步还没写下</span>'}</div></div>`).join('')
+      ${three.map((x,i)=>`<div class="card projcard" data-go="${x.go}" data-gid="${x.gid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}${x.heavy===2?' · 硬骨头':x.heavy===0?' · 轻':''}</span>${chip(x.st)}</div>
+        <h3>${esc(x.title)}</h3><div class="desc">${esc(x.desc)||'<span class="muted">下一步还没写下</span>'}</div>
+        <div class="tool-hint muted">${x.go==='proj'?'点开看脉络 →':x.go==='grow'?'去生长页整理 →':'去温室浇水 →'}</div></div>`).join('')
         || '<div class="card"><div class="desc">去「捕捉」写下第一句,或在「项目」里种一个开始。</div></div>'}
     </div>
     <h2 class="sec">邮件早报</h2>
@@ -282,6 +283,11 @@ VIEWS.today = async function(){
   document.querySelectorAll('[data-energy]').forEach(btn => btn.onclick = async () => {
     await q(sb.from('daily_state').upsert({ date: today, energy: btn.dataset.energy, updated_at: new Date().toISOString() }));
     toast('记下了,按这个步幅走'); route();
+  });
+  document.querySelectorAll('[data-go]').forEach(c => c.onclick = () => {
+    const g = c.dataset.go;
+    if (g === 'proj'){ location.hash = '#projects'; setTimeout(() => openProject(c.dataset.gid), 600); }
+    else location.hash = g === 'grow' ? '#grow' : '#lang';
   });
 };
 
@@ -439,6 +445,8 @@ async function openProject(id){
     q(sb.from('project_tasks').select('*').eq('project_id', id).order('created_at',{ascending:true}), true),
   ]);
   if (!p) return;
+  const pending = (ups||[]).find(u => u.note.startsWith('[拆解请求]'));
+  const visibleUps = (ups||[]).filter(u => !u.note.startsWith('[拆解请求]'));
   const done = (tasks||[]).filter(t=>t.done).length, total = (tasks||[]).length;
   const prog = total ? Math.round(done/total*100) : p.progress;
   closeModal(false);
@@ -451,7 +459,8 @@ async function openProject(id){
     <div class="spread"><span class="bignum" style="font-size:22px">${prog}%</span>${chip(p.status)}</div>
 
     <h3 style="font-family:var(--serif);font-weight:600;margin:22px 0 4px">待办拆解</h3>
-    <div class="muted" style="font-size:12.5px;margin-bottom:6px">勾完子任务,进度会自动生长。想让 Claude 帮你拆,在对话里说一声就好。</div>
+    <div class="spread" style="margin-bottom:6px"><span class="muted" style="font-size:12.5px">勾完子任务,进度会自动生长。</span>
+      ${pending ? '<span class="chip growing"><span class="dot"></span>已捎话给 Claude,下次经过时拆解</span>' : '<button class="ghost" data-preq style="font-size:12.5px">✎ 请 Claude 拆解</button>'}</div>
     ${total ? (tasks||[]).map(t=>`<div class="check">
         <input type="checkbox" data-task="${t.id}" ${t.done?'checked':''}>
         <span class="tt ${t.done?'done':''}">${esc(t.title)}</span>
@@ -460,7 +469,7 @@ async function openProject(id){
     <div class="row" style="margin-top:12px"><input class="small-in" id="new-task" placeholder="加一个子任务"><button class="primary" data-tadd>加</button></div>
 
     <h3 style="font-family:var(--serif);font-weight:600;margin:24px 0 6px">脉络 · 已经做过的</h3>
-    ${(ups||[]).length ? `<div class="timeline">${(ups||[]).map(u=>`<div class="ev"><div class="desc">${esc(u.note)}</div><div class="muted" style="font-size:12px">${fmtMD(u.created_at)}</div></div>`).join('')}</div>`
+    ${visibleUps.length ? `<div class="timeline">${visibleUps.map(u=>`<div class="ev"><div class="desc">${esc(u.note)}</div><div class="muted" style="font-size:12px">${fmtMD(u.created_at)}</div></div>`).join('')}</div>`
       : '<div class="muted">还没有记录。每做一步,写一句留在这里。</div>'}
     <div class="row" style="margin-top:12px"><input class="small-in" id="new-note" placeholder="记录刚做的一步"><button data-nadd>记下</button></div>
 
@@ -496,6 +505,11 @@ async function openProject(id){
   };
   mask.querySelector('[data-nadd]').onclick = addNote;
   mask.querySelector('#new-note').addEventListener('keydown', e => { if (e.key==='Enter') addNote(); });
+  const preq = mask.querySelector('[data-preq]');
+  if (preq) preq.onclick = async () => {
+    await q(sb.from('project_updates').insert({ project_id: id, note: '[拆解请求] ' + todayStr() }));
+    toast('已捎话给 Claude,通常次日早上就拆好了'); openProject(id);
+  };
   mask.querySelector('[data-pnext]').onclick = async () => {
     const v = prompt('下一步:', p.next_step||''); if (v === null) return;
     await q(sb.from('projects').update({ next_step: v, updated_at: new Date().toISOString() }).eq('id', id));
@@ -555,7 +569,9 @@ VIEWS.lang = async function(){
     <h2 class="sec">今天该浇水的(${due.length})</h2>
     <div class="grid g2">
       ${due.map(i=>`<div class="card"><div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">浇过 ${i.review_count} 次</span></div>
-        <h3>${esc(i.expression)}</h3><div class="desc">${esc(i.meaning||'')}</div>
+        <h3>${esc(i.expression)}</h3>
+        <div class="desc hidden" id="mean-${i.id}">${esc(i.meaning||'(还没写过意思——试着自己回想吧)')}</div>
+        <button class="ghost" data-flip="${i.id}" style="padding-left:0;margin-top:4px">先回想,再翻面看意思 ↺</button>
         <div class="row" style="margin-top:12px">
           <button data-rev="${i.id}" data-c="${i.review_count}">记得 ✓</button>
           <button data-master="${i.id}">已经长成了 🌿</button>
@@ -568,6 +584,9 @@ VIEWS.lang = async function(){
     const exp = $('#add-'+lang).value.trim(); if (!exp) return;
     await q(sb.from('lang_items').insert({ lang, expression: exp, meaning: $('#add-'+lang+'-m').value.trim() || null, source:'manual' }));
     await bumpCheckin(lang, 1); toast('收进温室了 🌱'); route();
+  });
+  document.querySelectorAll('[data-flip]').forEach(b => b.onclick = () => {
+    document.getElementById('mean-' + b.dataset.flip).classList.remove('hidden'); b.remove();
   });
   document.querySelectorAll('[data-rev]').forEach(b => b.onclick = async () => {
     await q(sb.from('lang_items').update({ review_count: parseInt(b.dataset.c)+1, last_reviewed_at: new Date().toISOString() }).eq('id', b.dataset.rev));
