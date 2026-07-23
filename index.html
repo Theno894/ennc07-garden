@@ -234,11 +234,13 @@ VIEWS.today = async function(){
   const energy = ds?.energy || 'mid';
 
   // 能量三档:低=轻/少,中=平衡,高=重/多。heavy: 0 轻 / 1 中 / 2 重
+  const snoozed = (ds?.actions?.snoozed) || [];   // 今天先不看的 id(明天自动重置)
+  const notSnoozed = arr => arr.filter(x => !snoozed.includes(x.sid));
   const dueLang = (langAll||[]).filter(i => !i.last_reviewed_at ||
     (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000);
-  const projCands = (projs||[]).map(p=>({t:'项目', title:p.name, desc:p.next_step||p.description||'', st:p.status, heavy: p.progress<50?2:(p.progress<80?1:0), go:'proj', gid:p.id}));
-  const seedCands = (seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), desc:e.next_step||'', st:e.status, heavy:1, go:'grow'}));
-  const langCands = dueLang.map(i=>({t:i.lang==='en'?'英语':'日语', title:i.expression, desc:'复习:'+(i.meaning?'点过去翻面回想':'轻轻回想一下'), st:'growing', heavy:0, go:'lang'}));
+  const projCands = notSnoozed((projs||[]).map(p=>({t:'项目', title:p.name, desc:p.next_step||p.description||'', st:p.status, heavy: p.progress<50?2:(p.progress<80?1:0), go:'proj', gid:p.id, sid:p.id})));
+  const seedCands = notSnoozed((seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), desc:e.next_step||'', st:e.status, heavy:1, go:'grow', sid:e.id})));
+  const langCands = notSnoozed(dueLang.map(i=>({t:i.lang==='en'?'英语':'日语', title:i.expression, desc:'复习:'+(i.meaning?'点开翻面回想':'轻轻回想一下'), st:'growing', heavy:0, go:'lang', sid:i.id})));
   const interleave = arrs => { const out=[]; for(let i=0;out.length<50;i++){ let any=false; for(const a of arrs){ if(a[i]){ out.push(a[i]); any=true; } } if(!any) break; } return out; };
   let three, energyNeed;
   if (energy==='low'){
@@ -272,9 +274,9 @@ VIEWS.today = async function(){
     <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">此刻值得照料的${three.length ? '' : '——花园还空着'}</h2>
       <span class="muted">按 ${energyLabel} · 今天端上 ${three.length}/${energyNeed} 件</span></div>
     <div class="grid g3">
-      ${three.map((x,i)=>`<div class="card projcard" data-go="${x.go}" data-gid="${x.gid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}${x.heavy===2?' · 硬骨头':x.heavy===0?' · 轻':''}</span>${chip(x.st)}</div>
+      ${three.map((x,i)=>`<div class="card projcard" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}${x.heavy===2?' · 硬骨头':x.heavy===0?' · 轻':''}</span>${chip(x.st)}</div>
         <h3>${esc(x.title)}</h3><div class="desc">${esc(x.desc)||'<span class="muted">下一步还没写下</span>'}</div>
-        <div class="tool-hint muted">${x.go==='proj'?'点开看脉络 →':x.go==='grow'?'去生长页整理 →':'去温室浇水 →'}</div></div>`).join('')
+        <div class="spread" style="margin-top:10px"><button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button><span class="tool-hint muted">${x.go==='proj'?'点开看脉络 →':x.go==='grow'?'去生长页整理 →':'点开复习 →'}</span></div></div>`).join('')
         || '<div class="card"><div class="desc">去「捕捉」写下第一句,或在「项目」里种一个开始。</div></div>'}
     </div>
     <h2 class="sec">邮件早报</h2>
@@ -284,15 +286,27 @@ VIEWS.today = async function(){
           : `早报还没送到过。Claude 每天早上 8 点会扫一遍邮箱,把值得看的放在这里。`}
     </div>`;
   document.querySelectorAll('[data-energy]').forEach(btn => btn.onclick = async () => {
-    await q(sb.from('daily_state').upsert({ date: today, energy: btn.dataset.energy, updated_at: new Date().toISOString() }));
+    await q(sb.from('daily_state').upsert({ date: today, energy: btn.dataset.energy, actions: ds?.actions || {}, updated_at: new Date().toISOString() }));
     toast('记下了,按这个步幅走'); route();
   });
-  document.querySelectorAll('[data-go]').forEach(c => c.onclick = () => {
+  document.querySelectorAll('[data-dismiss]').forEach(b => b.onclick = async (ev) => {
+    ev.stopPropagation();
+    const sid = b.dataset.dismiss; if (!sid) return;
+    const cur = ds?.actions || {};
+    const sn = cur.snoozed || [];
+    if (!sn.includes(sid)) sn.push(sid);
+    await q(sb.from('daily_state').upsert({ date: today, energy: ds?.energy || 'mid', actions: { ...cur, snoozed: sn }, updated_at: new Date().toISOString() }));
+    toast('今天先不看它，明天再回来 🌙'); route();
+  });
+  document.querySelectorAll('[data-go]').forEach(c => c.onclick = (ev) => {
+    if (ev.target.closest('[data-dismiss]')) return;
     const g = c.dataset.go;
     if (g === 'proj'){ location.hash = '#projects'; setTimeout(() => openProject(c.dataset.gid), 600); }
-    else location.hash = g === 'grow' ? '#grow' : '#lang';
+    else if (g === 'lang'){ startReviewOne(c.dataset.sid); }
+    else location.hash = '#grow';
   });
 };
+async function startReviewOne(id){ const { data } = await sb.from('lang_items').select('*').eq('id', id).maybeSingle(); if (data) startReview([data]); else toast('这个词找不到了'); }
 
 /* ================= 捕捉 ================= */
 VIEWS.capture = async function(){
