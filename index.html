@@ -282,6 +282,7 @@ function setPassword(){
 /* ================= 路由 ================= */
 const VIEWS = {};
 const langUI = { libOpen:false, q:'', filter:'全部', sort:'recent' };  // 词库 UI 状态(跨渲染保留)
+let growView = 'list';  // 生长页:列表 or 星图
 async function route(){
   if (!session) return;
   renderNav();
@@ -455,12 +456,16 @@ VIEWS.grow = async function(filter){
   const all = await q(sb.from('entries').select('*').order('updated_at',{ascending:false})) || [];
   const f = typeof filter === 'string' ? filter : '全部';
   const list = f === '全部' ? all : all.filter(e => e.kind === f);
+  const star = growView === 'star';
   $('#view').innerHTML = `
     <div class="eyebrow">正在生长</div>
     <h1 class="hero">最近的种子,不必马上成为答案</h1>
-    <p class="sub">默认只留原句;点开卡片,再整理它的状态与下一步。</p>
-    <div class="row" style="margin-bottom:16px">${['全部','灵感','学习','项目','生活'].map(k=>`<span class="chip click ${k===f?'sel':''}" data-f="${k}">${k}</span>`).join('')}</div>
-    <div class="grid g2">
+    <p class="sub">${star?'每颗种子一颗星,同主题聚成星座;点星星打开那条灵感。':'默认只留原句;点开卡片,再整理它的状态与下一步。'}</p>
+    <div class="spread" style="margin-bottom:16px">
+      <div class="row">${star?'':['全部','灵感','学习','项目','生活'].map(k=>`<span class="chip click ${k===f?'sel':''}" data-f="${k}">${k}</span>`).join('')}</div>
+      <div class="row"><span class="chip click ${star?'':'sel'}" data-view="list">列表</span><span class="chip click ${star?'sel':''}" data-view="star">✦ 星图</span></div>
+    </div>
+    ${star ? '<div id="starwrap" class="card" style="padding:6px"></div>' : `<div class="grid g2">
       ${list.map(e=>`<div class="card growcard" data-toggle="${e.id}">
         <div class="spread"><span class="muted">${esc(e.kind)} · ${fmtMD(e.occurred_on)}</span>${chip(e.status)}</div>
         <h3>${esc(e.title||'')}</h3>
@@ -477,7 +482,9 @@ VIEWS.grow = async function(filter){
         </div>
         <div class="tool-hint muted">点开整理 ↓</div>
       </div>`).join('') || '<div class="card"><div class="desc">这一类还没有种子。</div></div>'}
-    </div>`;
+    </div>`}`;
+  document.querySelectorAll('[data-view]').forEach(c => c.onclick = () => { growView = c.dataset.view; VIEWS.grow(f); });
+  if (star){ renderStar(all); return; }
   document.querySelectorAll('[data-f]').forEach(c => c.onclick = () => VIEWS.grow(c.dataset.f));
   document.querySelectorAll('.growcard').forEach(card => card.addEventListener('click', ev => {
     if (ev.target.closest('.card-tools')) return;        // 点工具区不折叠
@@ -498,6 +505,69 @@ VIEWS.grow = async function(filter){
     VIEWS.grow(f);
   });
 };
+
+/* ================= 灵感星图 ================= */
+const CLUSTERS = [
+  { key:'商业', name:'赚钱与商业', color:'#BA7517', tags:['商业','销售','变现','影响力','稀缺','路径','信任','风口','力量','显化','金钱心理','marketing','商业模式'] },
+  { key:'创业', name:'创业与创新', color:'#1D9E75', tags:['创业','创新','MVP','素食','壁垒','定价权','产品','营销','利他'] },
+  { key:'自我', name:'自我·坚持·家庭', color:'#D85A30', tags:['坚持自我','原生家庭','自我认知','接纳','觉醒','舆论','潜意识','自我','成长'] },
+  { key:'修行', name:'修行·命运·因果', color:'#7F77DD', tags:['修行','佛法','命运','因果','能量','发愿','感恩','养生','精气神','评判','摘抄'] },
+  { key:'认知', name:'AI·认知·跨学科', color:'#378ADD', tags:['AI','create-to-learn','跨学科','能量信息','认知','语言','金刚经','科技','能力','未来','方法论','标准化','专精','成长系统','学习'] },
+  { key:'处世', name:'处世·关系·投资', color:'#888780', tags:['处世','原则','关系','投资','周期','组织','战略','权力','平等','决断','勇气','决策'] },
+];
+const OTHER = { key:'其他', name:'新芽', color:'#B4B2A9' };
+const CROSS = [['商业','修行'],['认知','修行'],['自我','创业'],['认知','自我']];
+function clusterOf(e){ const tg=e.tags||[]; for(const c of CLUSTERS){ if(tg.some(t=>c.tags.includes(t))) return c; } return OTHER; }
+function renderStar(entries){
+  const wrap = document.getElementById('starwrap'); if(!wrap) return;
+  const W=800, H=520, cx=W/2, cy=H/2;
+  const groups = {}; CLUSTERS.forEach(c=>groups[c.key]={ c, items:[] });
+  const other = { c:OTHER, items:[] };
+  (entries||[]).forEach(e=>{ const c=clusterOf(e); (groups[c.key]||other).items.push(e); });
+  const active = [...CLUSTERS.map(c=>groups[c.key]).filter(g=>g.items.length), ...(other.items.length?[other]:[])];
+  const n = active.length || 1;
+  const centers = {};
+  active.forEach((g,i)=>{ const a=-Math.PI/2 + i/n*2*Math.PI; g.x=cx+258*Math.cos(a); g.y=cy+182*Math.sin(a); centers[g.c.key]={x:g.x,y:g.y}; });
+  let lines='', dots='', labels='';
+  active.forEach(g=>{ lines+=`<line x1="${cx}" y1="${cy}" x2="${g.x.toFixed(0)}" y2="${g.y.toFixed(0)}" stroke="var(--line)" stroke-width="1"/>`; });
+  CROSS.forEach(([a,b])=>{ if(centers[a]&&centers[b]) lines+=`<line x1="${centers[a].x.toFixed(0)}" y1="${centers[a].y.toFixed(0)}" x2="${centers[b].x.toFixed(0)}" y2="${centers[b].y.toFixed(0)}" stroke="var(--mute)" stroke-width="1" stroke-dasharray="3 6" opacity="0.5"/>`; });
+  active.forEach(g=>{
+    const m=g.items.length;
+    g.items.forEach((e,j)=>{
+      const a = j/Math.max(m,1)*2*Math.PI + g.x*0.02;
+      const r = 26 + (j%4)*14;
+      const sx=g.x+r*Math.cos(a), sy=g.y+r*Math.sin(a);
+      lines+=`<line x1="${g.x.toFixed(0)}" y1="${g.y.toFixed(0)}" x2="${sx.toFixed(1)}" y2="${sy.toFixed(1)}" stroke="${g.c.color}" stroke-width="0.6" opacity="0.3"/>`;
+      dots+=`<circle class="star" data-id="${e.id}" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="5" fill="${g.c.color}" style="cursor:pointer"><title>${esc(e.title||(e.content||'').slice(0,20))}</title></circle>`;
+    });
+    dots+=`<circle cx="${g.x.toFixed(0)}" cy="${g.y.toFixed(0)}" r="3" fill="${g.c.color}"/>`;
+    const w = g.c.name.length*13 + 12;
+    labels+=`<rect x="${(g.x-w/2).toFixed(0)}" y="${(g.y-11).toFixed(0)}" width="${w}" height="20" rx="5" fill="var(--paper)" opacity="0.88"/>`;
+    labels+=`<text x="${g.x.toFixed(0)}" y="${(g.y+4).toFixed(0)}" text-anchor="middle" font-size="12.5" fill="${g.c.color}">${esc(g.c.name)}</text>`;
+  });
+  dots+=`<circle cx="${cx}" cy="${cy}" r="7" fill="var(--accent)"/>`;
+  labels+=`<rect x="${cx-16}" y="${cy-11}" width="32" height="20" rx="5" fill="var(--paper)" opacity="0.9"/><text x="${cx}" y="${cy+4}" text-anchor="middle" font-size="13" fill="var(--ink)">你</text>`;
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${lines}${dots}${labels}</svg>
+    <div class="muted" style="text-align:center;font-size:12px;padding:4px 0 8px">共 ${(entries||[]).length} 颗 · 点星星打开它 · 虚线是主题之间的暗线</div>`;
+  wrap.querySelectorAll('.star').forEach(s => s.onclick = () => openSeed(s.dataset.id));
+}
+async function openSeed(id){
+  const { data:e } = await sb.from('entries').select('*').eq('id', id).maybeSingle();
+  if(!e) return;
+  const c = clusterOf(e);
+  closeModal(false);
+  document.body.insertAdjacentHTML('beforeend', `
+   <div class="modal-mask"><div class="modal" style="max-width:520px">
+    <div class="spread"><span class="chip"><span class="dot" style="background:${c.color}"></span>${esc(c.name)} · ${esc(e.kind)}</span><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
+    <h2>${esc(e.title||'')}</h2>
+    <div class="desc" style="white-space:pre-wrap;margin-top:6px">${esc(e.content)}</div>
+    <div class="row" style="margin-top:10px">${(e.tags||[]).map(t=>`<span class="chip">${esc(t)}</span>`).join('')}</div>
+    <div class="muted" style="font-size:12px;margin-top:10px">${fmtMD(e.occurred_on)} · ${STATUS_ZH[e.status]||e.status}</div>
+   </div></div>`);
+  const mask=document.querySelector('.modal-mask');
+  mask.addEventListener('click',ev=>{ if(ev.target===mask) closeModal(false); });
+  mask.querySelector('[data-mclose]').onclick=()=>closeModal(false);
+}
 
 /* ================= 项目 ================= */
 VIEWS.projects = async function(){
