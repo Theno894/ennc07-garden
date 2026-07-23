@@ -107,6 +107,8 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
 .timeline .ev::before{content:'';position:absolute;left:-19px;top:12px;width:8px;height:8px;border-radius:50%;background:var(--done)}
 .itemline{border-top:1px dashed var(--line);padding:10px 0;display:flex;gap:10px;align-items:flex-start;justify-content:space-between}
 .itemline:first-of-type{border-top:none}
+.cap-grid{display:grid;gap:14px;grid-template-columns:1.6fr 1fr}
+.card-done{opacity:.66}
 .itemline.click{cursor:pointer;border-radius:8px}
 .itemline.click:hover{background:var(--paper)}
 .exp{font-weight:500}
@@ -120,6 +122,8 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
   .topbar{padding:12px 16px;gap:8px}
   .top-right{gap:8px;margin-left:auto}
   .top-right button{white-space:nowrap;padding:6px 10px;font-size:13px}
+  .cap-grid{grid-template-columns:1fr}
+  .g3{grid-template-columns:1fr}
 }
 </style>
 </head>
@@ -297,28 +301,33 @@ VIEWS.today = async function(){
   const b = (brief||[])[0];
   const energy = ds?.energy || 'mid';
 
-  // 能量三档:低=轻/少,中=平衡,高=重/多。heavy: 0 轻 / 1 中 / 2 重
-  const snoozed = (ds?.actions?.snoozed) || [];   // 今天先不看的 id(明天自动重置)
+  // 每日固定待办:按能量定数量、至多 1 颗灵感种子;完成显示"已完成",不再往上顶新的
+  const snoozed = (ds?.actions?.snoozed) || [];
+  const doneToday = (ds?.actions?.done) || [];
   const notSnoozed = arr => arr.filter(x => !snoozed.includes(x.sid));
   const dueLang = (langAll||[]).filter(i => !i.last_reviewed_at ||
     (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000);
-  const projCands = notSnoozed((projs||[]).map(p=>({t:'项目', title:p.name, desc:p.next_step||p.description||'', st:p.status, heavy: p.progress<50?2:(p.progress<80?1:0), go:'proj', gid:p.id, sid:p.id})));
-  const seedCands = notSnoozed((seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), desc:e.next_step||'', st:e.status, heavy:1, go:'grow', sid:e.id})));
-  const langCands = notSnoozed(dueLang.map(i=>({t:i.lang==='en'?'英语':'日语', title:i.expression, desc:'复习:'+(i.meaning?'点开翻面回想':'轻轻回想一下'), st:'growing', heavy:0, go:'lang', sid:i.id})));
+  const projCands = notSnoozed((projs||[]).map(p=>({t:'项目', title:p.name, sub:p.next_step||p.description||'', st:p.status, go:'proj', gid:p.id, sid:p.id})));
+  const seedCands = notSnoozed((seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), sub:(e.content||'').slice(0,42), st:e.status, go:'grow', gid:e.id, sid:e.id})));
+  const langCands = notSnoozed(dueLang.map(i=>({t:i.lang==='en'?'英语':'日语', title:i.expression, sub:'点开翻面复习', st:'growing', go:'lang', gid:i.id, sid:i.id})));
   const interleave = arrs => { const out=[]; for(let i=0;out.length<50;i++){ let any=false; for(const a of arrs){ if(a[i]){ out.push(a[i]); any=true; } } if(!any) break; } return out; };
-  let three, energyNeed;
-  if (energy==='low'){
-    energyNeed = 2;
-    three = [...langCands, ...projCands.filter(x=>x.heavy===0), ...seedCands].slice(0,2);
-    if (!three.length) three = [...projCands, ...seedCands].slice(0,2);
-  } else if (energy==='high'){
-    energyNeed = 5;
-    three = [...projCands, ...seedCands, ...langCands].sort((a,b)=>b.heavy-a.heavy).slice(0,5);
-  } else {
-    energyNeed = 3;
-    three = interleave([projCands, seedCands, langCands]).slice(0,3);
-  }
+  const energyNeed = {low:2, mid:3, high:5}[energy];
   const energyLabel = {low:'低能量',mid:'中等能量',high:'高能量'}[energy];
+  const pickOne = arr => arr.length ? arr[Math.floor(Math.random()*arr.length)] : null;
+  // 只在每天第一次(或能量变化时)选一次,之后固定不变
+  let todo = ds?.actions?.todo;
+  if (!Array.isArray(todo) || ds?.actions?.todoEnergy !== energy){
+    const others = interleave([projCands, langCands]);        // 项目 + 到期语言
+    const seed = pickOne(seedCands);                           // 至多 1 颗灵感种子
+    const list = seed ? [seed] : [];
+    for (const o of others){ if (list.length >= energyNeed) break; list.push(o); }
+    todo = list.slice(0, energyNeed);
+    const cur = ds?.actions || {};
+    const actions = { ...cur, todo, todoEnergy: energy };
+    await q(sb.from('daily_state').upsert({ date: today, energy, actions, updated_at: new Date().toISOString() }), true);
+    ds = { ...(ds||{}), energy, actions };
+  }
+  const doneCount = todo.filter(x => doneToday.includes(x.sid)).length;
   const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" style="flex:1;text-align:left"><b>${label}</b><br><span class="muted" style="font-size:12px">${tip}</span></button>`;
   $('#view').innerHTML = `
     <div class="eyebrow">${esc(greeting())}</div>
@@ -335,13 +344,13 @@ VIEWS.today = async function(){
         </div>
       </div>
     </div>
-    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">此刻值得照料的${three.length ? '' : '——花园还空着'}</h2>
-      <span class="muted">按 ${energyLabel} · 今天端上 ${three.length}/${energyNeed} 件</span></div>
+    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">此刻值得照料的${todo.length ? '' : '——今天很轻'}</h2>
+      <span class="muted">按 ${energyLabel} · 已完成 ${doneCount}/${todo.length}</span></div>
     <div class="grid g3">
-      ${three.map((x,i)=>`<div class="card projcard" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}${x.heavy===2?' · 硬骨头':x.heavy===0?' · 轻':''}</span>${chip(x.st)}</div>
-        <h3>${esc(x.title)}</h3><div class="desc">${esc(x.desc)||'<span class="muted">下一步还没写下</span>'}</div>
-        <div class="spread" style="margin-top:10px"><button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button><span class="tool-hint muted">${x.go==='proj'?'点开看脉络 →':x.go==='grow'?'去生长页整理 →':'点开复习 →'}</span></div></div>`).join('')
-        || '<div class="card"><div class="desc">去「捕捉」写下第一句,或在「项目」里种一个开始。</div></div>'}
+      ${todo.map((x,i)=>{ const done = doneToday.includes(x.sid); return `<div class="card projcard ${done?'card-done':''}" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${done?'<span class="chip done"><span class="dot"></span>已完成</span>':chip(x.st)}</div>
+        <h3 style="${done?'text-decoration:line-through;color:var(--mute)':''}">${esc(x.title)}</h3><div class="desc">${esc(x.sub||'')}</div>
+        <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">${done?'↩ 撤销':'✓ 完成'}</button><button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button></div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':'去复习 →'}</span></div></div>`; }).join('')
+        || '<div class="card"><div class="desc">今天没有待办。去「捕捉」写下第一句,或点「生长」逛逛你的灵感。</div></div>'}
     </div>
     <h2 class="sec">邮件早报</h2>
     <div class="${b?'card':'note'}">
@@ -350,20 +359,29 @@ VIEWS.today = async function(){
           : `早报还没送到过。Claude 每天早上 8 点会扫一遍邮箱,把值得看的放在这里。`}
     </div>`;
   document.querySelectorAll('[data-energy]').forEach(btn => btn.onclick = async () => {
-    await q(sb.from('daily_state').upsert({ date: today, energy: btn.dataset.energy, actions: ds?.actions || {}, updated_at: new Date().toISOString() }));
-    toast('记下了,按这个步幅走'); route();
+    const cur = ds?.actions || {};
+    await q(sb.from('daily_state').upsert({ date: today, energy: btn.dataset.energy, actions: { ...cur, todo: null, todoEnergy: null }, updated_at: new Date().toISOString() }));
+    toast('记下了,按这个步幅重新端菜'); route();
+  });
+  document.querySelectorAll('[data-done]').forEach(b => b.onclick = async (ev) => {
+    ev.stopPropagation();
+    const sid = b.dataset.done; const cur = ds?.actions || {};
+    const was = (cur.done||[]).includes(sid);
+    const dn = was ? (cur.done||[]).filter(x=>x!==sid) : [ ...(cur.done||[]), sid ];
+    await q(sb.from('daily_state').upsert({ date: today, energy: ds?.energy||'mid', actions: { ...cur, done: dn }, updated_at: new Date().toISOString() }));
+    if (!was) toast('照料好了 ✓'); route();
   });
   document.querySelectorAll('[data-dismiss]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation();
     const sid = b.dataset.dismiss; if (!sid) return;
     const cur = ds?.actions || {};
-    const sn = cur.snoozed || [];
-    if (!sn.includes(sid)) sn.push(sid);
-    await q(sb.from('daily_state').upsert({ date: today, energy: ds?.energy || 'mid', actions: { ...cur, snoozed: sn }, updated_at: new Date().toISOString() }));
+    const sn = cur.snoozed || []; if (!sn.includes(sid)) sn.push(sid);
+    const t = (cur.todo || todo).filter(x => x.sid !== sid);
+    await q(sb.from('daily_state').upsert({ date: today, energy: ds?.energy||'mid', actions: { ...cur, snoozed: sn, todo: t }, updated_at: new Date().toISOString() }));
     toast('今天先不看它，明天再回来 🌙'); route();
   });
   document.querySelectorAll('[data-go]').forEach(c => c.onclick = (ev) => {
-    if (ev.target.closest('[data-dismiss]')) return;
+    if (ev.target.closest('[data-dismiss]') || ev.target.closest('[data-done]')) return;
     const g = c.dataset.go;
     if (g === 'proj'){ location.hash = '#projects'; setTimeout(() => openProject(c.dataset.gid), 600); }
     else if (g === 'lang'){ startReviewOne(c.dataset.sid); }
@@ -380,7 +398,7 @@ VIEWS.capture = async function(){
     <div class="eyebrow">统一捕捉</div>
     <h1 class="hero">只需要说一次,花园会先保留原句</h1>
     <p class="sub">选择只是第一层整理;英语/日语会直接落进语言温室。</p>
-    <div class="grid g2" style="grid-template-columns:1.6fr 1fr">
+    <div class="cap-grid">
       <div class="card">
         <textarea id="cap-text" placeholder="写下一句话。它可以是想法、进展、身体感受,或刚学到的一句表达……"></textarea>
         <div class="row" style="margin:14px 0">${KINDS.map(k=>`<span class="chip click" data-kind="${k}">${k}</span>`).join('')}</div>
