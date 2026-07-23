@@ -166,7 +166,7 @@ const STATUS_ZH = {seed:'待处理', growing:'正在生长', waiting:'等待中'
 const chip = st => `<span class="chip ${st}"><span class="dot"></span>${STATUS_ZH[st]||st}</span>`;
 
 /* ================= 导航与路由 ================= */
-const TABS = [ ['today','今日','今'], ['capture','捕捉','＋'], ['grow','生长','芽'], ['projects','项目','进'], ['lang','语言温室','语'], ['review','回顾','看'] ];
+const TABS = [ ['today','今日','今'], ['capture','捕捉','＋'], ['grow','生长','芽'], ['projects','项目','进'], ['lang','语言温室','语'], ['create','创作','作'], ['review','回顾','看'] ];
 function renderNav(){
   const cur = location.hash.replace('#','') || 'today';
   $('#nav-desk').innerHTML = TABS.map(([id,name]) => `<a href="#${id}" class="${cur===id?'on':''}">${name}</a>`).join('');
@@ -799,6 +799,60 @@ function startReview(list){
     mask.querySelectorAll('[data-r]').forEach(b => b.onclick = async () => { await srsMark(i, b.dataset.r); idx++; render(); });
   };
   render();
+}
+
+/* ================= 创作 ================= */
+const PLAT = { xiaohongshu:'小红书', x:'X', blog:'长文' };
+const DSTAT = { draft:'草稿', ready:'待发', published:'已发' };
+VIEWS.create = async function(){
+  const drafts = await q(sb.from('drafts').select('*').order('updated_at',{ascending:false}), true) || [];
+  $('#view').innerHTML = `
+    <div class="eyebrow">创作</div>
+    <h1 class="hero">让灵感长成作品</h1>
+    <p class="sub">这里是灵感的出口。挑一颗种子,和我聊聊,它就能长成一篇能发的稿。</p>
+    <div style="margin-bottom:16px"><button class="primary" id="d-new">＋ 新建空白稿</button></div>
+    <div class="grid g2">
+      ${drafts.length ? drafts.map(d=>`<div class="card projcard" data-draft="${d.id}">
+        <div class="spread"><span class="chip">${PLAT[d.platform]||d.platform}</span><span class="chip ${d.status==='published'?'done':d.status==='ready'?'growing':'seed'}"><span class="dot"></span>${DSTAT[d.status]||d.status}</span></div>
+        <h3>${esc(d.title)}</h3>
+        <div class="desc">${esc((d.content_md||'').replace(/\s+/g,' ').slice(0,64))}…</div>
+        <div class="tool-hint muted">点开看全文 →</div>
+      </div>`).join('') : '<div class="card"><div class="desc">还没有作品。跟我说一句「帮我把某某灵感写成小红书」,写好我就放进这里;也可以点上面新建。</div></div>'}
+    </div>`;
+  $('#d-new').onclick = async () => {
+    const title = prompt('标题:'); if (!title) return;
+    await q(sb.from('drafts').insert({ title, content_md:'', platform:'xiaohongshu', status:'draft' }));
+    toast('新建了一篇'); route();
+  };
+  document.querySelectorAll('[data-draft]').forEach(c => c.onclick = () => openDraft(c.dataset.draft));
+};
+async function openDraft(id){
+  const { data: d } = await sb.from('drafts').select('*').eq('id', id).maybeSingle();
+  if (!d) return;
+  closeModal(false);
+  document.body.insertAdjacentHTML('beforeend', `
+   <div class="modal-mask"><div class="modal">
+    <div class="spread"><span class="chip">${PLAT[d.platform]||d.platform} · ${DSTAT[d.status]}</span><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
+    <h2>${esc(d.title)}</h2>
+    ${d.source?`<div class="muted" style="font-size:12px;margin-bottom:8px">来源:${esc(d.source)}</div>`:''}
+    <div class="desc" style="white-space:pre-wrap;border-top:1px solid var(--line);padding-top:12px">${esc(d.content_md||'(还没有内容,可点编辑或让 Claude 帮你写)')}</div>
+    <div class="row" style="margin-top:16px">
+      <button class="primary" data-dcopy>📋 复制全文</button>
+      <button data-dstatus="ready" ${d.status==='ready'?'disabled':''}>标记待发</button>
+      <button data-dstatus="published" ${d.status==='published'?'disabled':''}>标记已发</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="ghost" data-dedit>✎ 编辑</button>
+      <button class="ghost" data-ddel style="color:var(--danger)">删除</button>
+    </div>
+   </div></div>`);
+  const mask = document.querySelector('.modal-mask');
+  mask.addEventListener('click', ev => { if (ev.target===mask) closeModal(true); });
+  mask.querySelector('[data-mclose]').onclick = () => closeModal(true);
+  mask.querySelector('[data-dcopy]').onclick = async () => { try { await navigator.clipboard.writeText(d.content_md||''); toast('已复制,去粘贴发布吧 📋'); } catch(e){ toast('复制失败,请手动选择文字'); } };
+  mask.querySelectorAll('[data-dstatus]').forEach(b => b.onclick = async () => { await q(sb.from('drafts').update({ status:b.dataset.dstatus, updated_at:new Date().toISOString() }).eq('id', id)); toast('状态已更新'); openDraft(id); });
+  mask.querySelector('[data-dedit]').onclick = async () => { const t=prompt('标题:', d.title); if(t===null) return; const c=prompt('正文(整段替换):', d.content_md||''); if(c===null) return; await q(sb.from('drafts').update({ title:t, content_md:c, updated_at:new Date().toISOString() }).eq('id', id)); openDraft(id); };
+  mask.querySelector('[data-ddel]').onclick = async () => { if(!confirm('删除「'+d.title+'」?')) return; await q(sb.from('drafts').delete().eq('id', id)); toast('已删除'); closeModal(true); };
 }
 
 /* ================= 回顾 ================= */
