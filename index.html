@@ -600,15 +600,17 @@ VIEWS.lang = async function(){
     <h1 class="hero">已经连续生长 ${streak} 天</h1>
     <p class="sub">每一条表达都是一颗种子;复习是浇水,不是考试。</p>
     <div class="grid g2">${col('en')}${col('ja')}</div>
-    <h2 class="sec">今天该浇水的(${due.length})</h2>
+    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">今天该浇水的(${due.length})</h2>
+      ${due.length ? '<button class="primary" id="focus-review">▶ 专注复习</button>' : ''}</div>
     <div class="grid g2">
       ${due.map(i=>`<div class="card"><div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">浇过 ${i.review_count} 次</span></div>
         <h3>${esc(i.expression)}</h3>
-        <div class="desc hidden" id="mean-${i.id}">${esc(i.meaning||'(还没写过意思——试着自己回想吧)')}</div>
+        <div class="desc hidden" id="mean-${i.id}">${esc(i.meaning||'(还没写过意思——试着自己回想吧)')}${i.example?`<div class="muted" style="font-size:13px;margin-top:4px">${esc(i.example)}</div>`:''}</div>
         <button class="ghost" data-flip="${i.id}" style="padding-left:0;margin-top:4px">先回想,再翻面看意思 ↺</button>
         <div class="row" style="margin-top:12px">
+          <button data-forgot="${i.id}" data-c="${i.review_count}">没记住 ↻</button>
           <button data-rev="${i.id}" data-c="${i.review_count}">记得 ✓</button>
-          <button data-master="${i.id}">已经长成了 🌿</button>
+          <button data-master="${i.id}">已掌握 🌿</button>
         </div></div>`).join('') || '<div class="card"><div class="desc">今天没有需要浇水的表达,温室很安静。</div></div>'}
     </div>
     <h2 class="sec">月度收获</h2>
@@ -667,11 +669,48 @@ VIEWS.lang = async function(){
     await q(sb.from('lang_items').update({ review_count: parseInt(b.dataset.c)+1, last_reviewed_at: new Date().toISOString() }).eq('id', b.dataset.rev));
     toast('浇过水了'); route();
   });
+  document.querySelectorAll('[data-forgot]').forEach(b => b.onclick = async () => {
+    await q(sb.from('lang_items').update({ review_count: 0, last_reviewed_at: new Date().toISOString() }).eq('id', b.dataset.forgot));
+    toast('没关系,过几天再见它 ↻'); route();
+  });
   document.querySelectorAll('[data-master]').forEach(b => b.onclick = async () => {
     await q(sb.from('lang_items').update({ mastered: true }).eq('id', b.dataset.master));
     toast('这颗已经长成 🌿'); route();
   });
+  $('#focus-review') && ($('#focus-review').onclick = () => startReview(due));
 };
+
+/* 专注复习:一次一张卡 */
+async function srsMark(i, kind){
+  if (kind === 'remembered') return q(sb.from('lang_items').update({ review_count: (i.review_count||0)+1, last_reviewed_at: new Date().toISOString() }).eq('id', i.id));
+  if (kind === 'forgot')     return q(sb.from('lang_items').update({ review_count: 0, last_reviewed_at: new Date().toISOString() }).eq('id', i.id));
+  if (kind === 'mastered')   return q(sb.from('lang_items').update({ mastered: true }).eq('id', i.id));
+}
+function startReview(list){
+  let idx = 0;
+  const render = () => {
+    document.querySelector('.modal-mask')?.remove();
+    if (idx >= list.length){ toast('复习完成 🌿 共 ' + list.length + ' 张'); route(); return; }
+    const i = list[idx];
+    document.body.insertAdjacentHTML('beforeend', `
+     <div class="modal-mask"><div class="modal" style="max-width:520px;text-align:center">
+      <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">${idx+1} / ${list.length}</span></div>
+      <h2 style="margin:28px 0 10px;font-size:26px">${esc(i.expression)}</h2>
+      <div id="rev-mean" class="hidden"><div style="margin:6px 0">${esc(i.meaning||'(没写意思,凭感觉回想)')}</div>${i.example?`<div class="muted" style="font-size:13px">${esc(i.example)}</div>`:''}</div>
+      <button id="rev-flip" class="ghost" style="margin:6px 0 18px">翻面看答案 ↺</button>
+      <div class="row" style="justify-content:center">
+        <button data-r="forgot">没记住 ↻</button>
+        <button data-r="remembered">记得 ✓</button>
+        <button data-r="mastered">已掌握 🌿</button>
+      </div>
+     </div></div>`);
+    const mask = document.querySelector('.modal-mask');
+    mask.addEventListener('click', ev => { if (ev.target === mask){ mask.remove(); route(); } });
+    mask.querySelector('#rev-flip').onclick = () => mask.querySelector('#rev-mean').classList.remove('hidden');
+    mask.querySelectorAll('[data-r]').forEach(b => b.onclick = async () => { await srsMark(i, b.dataset.r); idx++; render(); });
+  };
+  render();
+}
 
 /* ================= 回顾 ================= */
 VIEWS.review = async function(){
