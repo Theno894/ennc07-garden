@@ -457,10 +457,14 @@ async function openProject(id){
     <div class="desc">${esc(p.description||'')}</div>
     <div class="bar"><i style="width:${prog}%"></i></div>
     <div class="spread"><span class="bignum" style="font-size:22px">${prog}%</span>${chip(p.status)}</div>
+    <div class="row" style="margin-top:14px">
+      <button class="primary" data-ai="decompose">✨ AI 拆解子任务</button>
+      <button data-ai="analyze">🔍 AI 看进展</button>
+    </div>
+    <div id="ai-out" class="note hidden" style="margin-top:12px;white-space:pre-wrap"></div>
 
     <h3 style="font-family:var(--serif);font-weight:600;margin:22px 0 4px">待办拆解</h3>
-    <div class="spread" style="margin-bottom:6px"><span class="muted" style="font-size:12.5px">勾完子任务,进度会自动生长。</span>
-      ${pending ? '<span class="chip growing"><span class="dot"></span>已捎话给 Claude,下次经过时拆解</span>' : '<button class="ghost" data-preq style="font-size:12.5px">✎ 请 Claude 拆解</button>'}</div>
+    <div class="muted" style="font-size:12.5px;margin-bottom:6px">勾完子任务,进度会自动生长;也可以让上面的 AI 帮你拆。</div>
     ${total ? (tasks||[]).map(t=>`<div class="check">
         <input type="checkbox" data-task="${t.id}" ${t.done?'checked':''}>
         <span class="tt ${t.done?'done':''}">${esc(t.title)}</span>
@@ -505,11 +509,30 @@ async function openProject(id){
   };
   mask.querySelector('[data-nadd]').onclick = addNote;
   mask.querySelector('#new-note').addEventListener('keydown', e => { if (e.key==='Enter') addNote(); });
-  const preq = mask.querySelector('[data-preq]');
-  if (preq) preq.onclick = async () => {
-    await q(sb.from('project_updates').insert({ project_id: id, note: '[拆解请求] ' + todayStr() }));
-    toast('已捎话给 Claude,通常次日早上就拆好了'); openProject(id);
-  };
+  mask.querySelectorAll('[data-ai]').forEach(b => b.onclick = async () => {
+    const mode = b.dataset.ai;
+    const label = b.textContent;
+    mask.querySelectorAll('[data-ai]').forEach(x => x.disabled = true);
+    b.textContent = mode === 'decompose' ? '拆解中…' : '分析中…';
+    const out = mask.querySelector('#ai-out');
+    try {
+      const { data, error } = await sb.functions.invoke('garden-ai', { body: { project_id: id, mode } });
+      if (error) throw new Error((await error.context?.json?.())?.error || error.message);
+      if (data?.error) throw new Error(data.error);
+      if (mode === 'decompose'){
+        toast('拆解好了,新增 ' + ((data.added||[]).length) + ' 条 🌱');
+        openProject(id); return;
+      } else {
+        out.textContent = data.analysis || '(没有返回内容)';
+        out.classList.remove('hidden');
+      }
+    } catch (e) {
+      out.textContent = '调用失败:' + e.message + '\n(若提示缺少密钥,请先在 Supabase 部署函数并设置 DEEPSEEK_API_KEY)';
+      out.classList.remove('hidden');
+    }
+    mask.querySelectorAll('[data-ai]').forEach(x => x.disabled = false);
+    b.textContent = label;
+  });
   mask.querySelector('[data-pnext]').onclick = async () => {
     const v = prompt('下一步:', p.next_step||''); if (v === null) return;
     await q(sb.from('projects').update({ next_step: v, updated_at: new Date().toISOString() }).eq('id', id));
