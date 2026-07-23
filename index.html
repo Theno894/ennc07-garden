@@ -82,6 +82,23 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
 .login-card p{color:var(--mute);font-size:14px;margin-bottom:20px}
 .login-card input{text-align:center;margin-bottom:12px}
 .hidden{display:none!important}
+.growcard{cursor:pointer}
+.card-tools{display:none}
+.growcard.open .card-tools{display:block}
+.tool-hint{font-size:12px;margin-top:10px;text-align:right;user-select:none}
+.projcard{cursor:pointer;transition:border-color .15s}
+.projcard:hover{border-color:var(--accent)}
+.modal-mask{position:fixed;inset:0;background:rgba(34,52,40,.34);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+.modal{background:var(--card);border:1px solid var(--line);border-radius:20px;max-width:640px;width:100%;padding:24px 26px;box-shadow:0 20px 60px rgba(34,52,40,.22)}
+.modal h2{font-family:var(--serif);font-weight:900;font-size:22px;margin:6px 0}
+.check{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px dashed var(--line)}
+.check:first-of-type{border-top:none}
+.check input{width:auto}
+.check .tt{flex:1}
+.check .tt.done{text-decoration:line-through;color:var(--mute)}
+.timeline{border-left:2px solid var(--line);padding-left:14px}
+.timeline .ev{position:relative;padding:6px 0}
+.timeline .ev::before{content:'';position:absolute;left:-19px;top:12px;width:8px;height:8px;border-radius:50%;background:var(--done)}
 .itemline{border-top:1px dashed var(--line);padding:10px 0;display:flex;gap:10px;align-items:flex-start;justify-content:space-between}
 .itemline:first-of-type{border-top:none}
 .exp{font-weight:500}
@@ -330,29 +347,40 @@ VIEWS.grow = async function(filter){
   $('#view').innerHTML = `
     <div class="eyebrow">正在生长</div>
     <h1 class="hero">最近的种子,不必马上成为答案</h1>
-    <p class="sub">打开一颗种子,继续整理它的状态、连接和下一步。</p>
+    <p class="sub">默认只留原句;点开卡片,再整理它的状态与下一步。</p>
     <div class="row" style="margin-bottom:16px">${['全部','灵感','学习','项目','生活'].map(k=>`<span class="chip click ${k===f?'sel':''}" data-f="${k}">${k}</span>`).join('')}</div>
     <div class="grid g2">
-      ${list.map(e=>`<div class="card">
+      ${list.map(e=>`<div class="card growcard" data-toggle="${e.id}">
         <div class="spread"><span class="muted">${esc(e.kind)} · ${fmtMD(e.occurred_on)}</span>${chip(e.status)}</div>
         <h3>${esc(e.title||'')}</h3>
         <div class="desc">${esc(e.content)}</div>
         <div class="row" style="margin-top:8px">${(e.tags||[]).map(t=>`<span class="chip">${esc(t)}</span>`).join('')}</div>
-        <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">
-          <div class="muted">下一步</div>
-          <div class="desc" data-step="${e.id}" style="cursor:pointer">${esc(e.next_step)||'<span class="muted">点这里写下一步</span>'}</div>
+        <div class="card-tools">
+          <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">
+            <div class="muted">下一步</div>
+            <div class="desc" data-step="${e.id}" style="cursor:text">${esc(e.next_step)||'<span class="muted">点这里写下一步</span>'}</div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            ${(NEXT_STATUS[e.status]||[]).map(s=>`<button data-adv="${e.id}" data-to="${s}">${STATUS_ZH[s]}</button>`).join('')}
+          </div>
         </div>
-        <div class="row" style="margin-top:12px">
-          ${(NEXT_STATUS[e.status]||[]).map(s=>`<button data-adv="${e.id}" data-to="${s}">${STATUS_ZH[s]}</button>`).join('')}
-        </div>
+        <div class="tool-hint muted">点开整理 ↓</div>
       </div>`).join('') || '<div class="card"><div class="desc">这一类还没有种子。</div></div>'}
     </div>`;
   document.querySelectorAll('[data-f]').forEach(c => c.onclick = () => VIEWS.grow(c.dataset.f));
-  document.querySelectorAll('[data-adv]').forEach(b => b.onclick = async () => {
+  document.querySelectorAll('.growcard').forEach(card => card.addEventListener('click', ev => {
+    if (ev.target.closest('.card-tools')) return;        // 点工具区不折叠
+    const open = card.classList.toggle('open');
+    const hint = card.querySelector('.tool-hint');
+    if (hint) hint.textContent = open ? '收起 ↑' : '点开整理 ↓';
+  }));
+  document.querySelectorAll('[data-adv]').forEach(b => b.onclick = async (ev) => {
+    ev.stopPropagation();
     await q(sb.from('entries').update({ status: b.dataset.to, updated_at: new Date().toISOString() }).eq('id', b.dataset.adv));
     toast('状态已流转 → ' + STATUS_ZH[b.dataset.to]); VIEWS.grow(f);
   });
-  document.querySelectorAll('[data-step]').forEach(d => d.onclick = async () => {
+  document.querySelectorAll('[data-step]').forEach(d => d.onclick = async (ev) => {
+    ev.stopPropagation();
     const v = prompt('这颗种子的下一步:', d.textContent.trim());
     if (v === null) return;
     await q(sb.from('entries').update({ next_step: v, updated_at: new Date().toISOString() }).eq('id', d.dataset.step));
@@ -362,30 +390,29 @@ VIEWS.grow = async function(filter){
 
 /* ================= 项目 ================= */
 VIEWS.projects = async function(){
-  const [projs, ups] = await Promise.all([
+  const [projs, tasks] = await Promise.all([
     q(sb.from('projects').select('*').order('updated_at',{ascending:false})),
-    q(sb.from('project_updates').select('*').order('created_at',{ascending:false}).limit(30)),
+    q(sb.from('project_tasks').select('project_id,done'), true),
   ]);
+  const stat = {};
+  (tasks||[]).forEach(t=>{ const s = stat[t.project_id] || (stat[t.project_id]={done:0,total:0}); s.total++; if(t.done) s.done++; });
   const active = (projs||[]).filter(p=>p.status==='growing').length;
   $('#view').innerHTML = `
     <div class="eyebrow">项目与工作</div>
     <h1 class="hero">把下一步放在看得见的地方</h1>
-    <p class="sub">${active} 项正在被照料,${(projs||[]).length - active} 项已经收好;进度仍由你判断,不用被数字追赶。</p>
+    <p class="sub">${active} 项正在被照料,${(projs||[]).length - active} 项已经收好;点开任意项目,看它的脉络与拆解。</p>
     <div style="margin-bottom:16px"><button class="primary" id="p-add">＋ 种一个新项目</button></div>
     <div class="grid g3">
       ${(projs||[]).map(p=>{
-        const notes = (ups||[]).filter(u=>u.project_id===p.id).slice(0,2);
-        return `<div class="card">
+        const s = stat[p.id];
+        const prog = s && s.total ? Math.round(s.done/s.total*100) : p.progress;
+        const summary = s && s.total ? `已完成 ${s.done}/${s.total} 步` : (esc(p.next_step)||'点开做拆解');
+        return `<div class="card projcard" data-open="${p.id}">
           <div class="spread"><span class="chip">${esc(p.area||'项目')}</span>${chip(p.status)}</div>
           <h3>${esc(p.name)}</h3><div class="desc">${esc(p.description||'')}</div>
-          <div class="bar"><i style="width:${p.progress}%"></i></div>
-          <div class="spread"><span class="bignum" style="font-size:24px">${p.progress}%</span><span class="muted">${esc(p.next_step)||'下一步还没写下'}</span></div>
-          ${notes.map(n=>`<div class="muted" style="margin-top:6px">· ${esc(n.note.slice(0,40))} <span style="opacity:.7">${fmtMD(n.created_at)}</span></div>`).join('')}
-          <div class="row" style="margin-top:12px">
-            <button data-pstep="${p.id}">记录一步</button>
-            <button data-pprog="${p.id}" data-cur="${p.progress}">更新进展</button>
-            ${p.status==='growing' ? `<button data-pdone="${p.id}">收进已完成</button>` : ''}
-          </div>
+          <div class="bar"><i style="width:${prog}%"></i></div>
+          <div class="spread"><span class="bignum" style="font-size:24px">${prog}%</span><span class="muted">${summary}</span></div>
+          <div class="tool-hint muted">点开看脉络 →</div>
         </div>`;
       }).join('') || '<div class="card"><div class="desc">还没有项目。</div></div>'}
     </div>`;
@@ -395,23 +422,96 @@ VIEWS.projects = async function(){
     await q(sb.from('projects').insert({ name, description: desc }));
     toast('已种下新项目'); route();
   };
-  document.querySelectorAll('[data-pstep]').forEach(b => b.onclick = async () => {
-    const note = prompt('这一步做了什么:'); if (!note) return;
-    await q(sb.from('project_updates').insert({ project_id: b.dataset.pstep, note }));
-    await q(sb.from('projects').update({ updated_at: new Date().toISOString() }).eq('id', b.dataset.pstep));
-    toast('已记下这一步'); route();
-  });
-  document.querySelectorAll('[data-pprog]').forEach(b => b.onclick = async () => {
-    const v = prompt('现在进度(0-100):', b.dataset.cur); if (v === null) return;
-    const n = Math.max(0, Math.min(100, parseInt(v)||0));
-    await q(sb.from('projects').update({ progress: n, status: n>=100?'done':'growing', updated_at: new Date().toISOString() }).eq('id', b.dataset.pprog));
-    route();
-  });
-  document.querySelectorAll('[data-pdone]').forEach(b => b.onclick = async () => {
-    await q(sb.from('projects').update({ status:'done', updated_at: new Date().toISOString() }).eq('id', b.dataset.pdone));
-    toast('这次行动已经结束,收好了'); route();
-  });
+  document.querySelectorAll('[data-open]').forEach(c => c.onclick = () => openProject(c.dataset.open));
 };
+
+async function recomputeProgress(id){
+  const tasks = await q(sb.from('project_tasks').select('done').eq('project_id', id)) || [];
+  if (!tasks.length) return;
+  const prog = Math.round(tasks.filter(t=>t.done).length / tasks.length * 100);
+  await q(sb.from('projects').update({ progress: prog, status: prog>=100?'done':'growing', updated_at: new Date().toISOString() }).eq('id', id));
+}
+function closeModal(refresh){ const m = document.querySelector('.modal-mask'); if (m) m.remove(); if (refresh) VIEWS.projects(); }
+async function openProject(id){
+  const [p, ups, tasks] = await Promise.all([
+    q(sb.from('projects').select('*').eq('id', id).maybeSingle()),
+    q(sb.from('project_updates').select('*').eq('project_id', id).order('created_at',{ascending:false}), true),
+    q(sb.from('project_tasks').select('*').eq('project_id', id).order('created_at',{ascending:true}), true),
+  ]);
+  if (!p) return;
+  const done = (tasks||[]).filter(t=>t.done).length, total = (tasks||[]).length;
+  const prog = total ? Math.round(done/total*100) : p.progress;
+  closeModal(false);
+  document.body.insertAdjacentHTML('beforeend', `
+   <div class="modal-mask"><div class="modal">
+    <div class="spread"><span class="chip">${esc(p.area||'项目')}</span><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
+    <h2>${esc(p.name)}</h2>
+    <div class="desc">${esc(p.description||'')}</div>
+    <div class="bar"><i style="width:${prog}%"></i></div>
+    <div class="spread"><span class="bignum" style="font-size:22px">${prog}%</span>${chip(p.status)}</div>
+
+    <h3 style="font-family:var(--serif);font-weight:600;margin:22px 0 4px">待办拆解</h3>
+    <div class="muted" style="font-size:12.5px;margin-bottom:6px">勾完子任务,进度会自动生长。想让 Claude 帮你拆,在对话里说一声就好。</div>
+    ${total ? (tasks||[]).map(t=>`<div class="check">
+        <input type="checkbox" data-task="${t.id}" ${t.done?'checked':''}>
+        <span class="tt ${t.done?'done':''}">${esc(t.title)}</span>
+        <button class="ghost" data-tdel="${t.id}">删</button></div>`).join('')
+      : '<div class="muted">还没有拆解。自己加一条,或让 Claude 帮你拆。</div>'}
+    <div class="row" style="margin-top:12px"><input class="small-in" id="new-task" placeholder="加一个子任务"><button class="primary" data-tadd>加</button></div>
+
+    <h3 style="font-family:var(--serif);font-weight:600;margin:24px 0 6px">脉络 · 已经做过的</h3>
+    ${(ups||[]).length ? `<div class="timeline">${(ups||[]).map(u=>`<div class="ev"><div class="desc">${esc(u.note)}</div><div class="muted" style="font-size:12px">${fmtMD(u.created_at)}</div></div>`).join('')}</div>`
+      : '<div class="muted">还没有记录。每做一步,写一句留在这里。</div>'}
+    <div class="row" style="margin-top:12px"><input class="small-in" id="new-note" placeholder="记录刚做的一步"><button data-nadd>记下</button></div>
+
+    <div class="row" style="margin-top:22px;border-top:1px solid var(--line);padding-top:14px">
+      <button data-pnext>改下一步</button>
+      ${p.status==='growing' ? '<button data-pfin>收进已完成</button>' : '<button data-preopen>重新打开</button>'}
+    </div>
+    ${p.next_step ? `<div class="muted" style="margin-top:8px">下一步:${esc(p.next_step)}</div>` : ''}
+   </div></div>`);
+  const mask = document.querySelector('.modal-mask');
+  mask.addEventListener('click', ev => { if (ev.target === mask) closeModal(true); });
+  mask.querySelector('[data-mclose]').onclick = () => closeModal(true);
+  mask.querySelectorAll('[data-task]').forEach(cb => cb.onchange = async () => {
+    await q(sb.from('project_tasks').update({ done: cb.checked }).eq('id', cb.dataset.task));
+    await recomputeProgress(id); openProject(id);
+  });
+  mask.querySelectorAll('[data-tdel]').forEach(b => b.onclick = async () => {
+    await q(sb.from('project_tasks').delete().eq('id', b.dataset.tdel));
+    await recomputeProgress(id); openProject(id);
+  });
+  const addTask = async () => {
+    const v = mask.querySelector('#new-task').value.trim(); if (!v) return;
+    await q(sb.from('project_tasks').insert({ project_id: id, title: v }));
+    await recomputeProgress(id); openProject(id);
+  };
+  mask.querySelector('[data-tadd]').onclick = addTask;
+  mask.querySelector('#new-task').addEventListener('keydown', e => { if (e.key==='Enter') addTask(); });
+  const addNote = async () => {
+    const v = mask.querySelector('#new-note').value.trim(); if (!v) return;
+    await q(sb.from('project_updates').insert({ project_id: id, note: v }));
+    await q(sb.from('projects').update({ updated_at: new Date().toISOString() }).eq('id', id));
+    openProject(id);
+  };
+  mask.querySelector('[data-nadd]').onclick = addNote;
+  mask.querySelector('#new-note').addEventListener('keydown', e => { if (e.key==='Enter') addNote(); });
+  mask.querySelector('[data-pnext]').onclick = async () => {
+    const v = prompt('下一步:', p.next_step||''); if (v === null) return;
+    await q(sb.from('projects').update({ next_step: v, updated_at: new Date().toISOString() }).eq('id', id));
+    openProject(id);
+  };
+  const fin = mask.querySelector('[data-pfin]');
+  if (fin) fin.onclick = async () => {
+    await q(sb.from('projects').update({ status:'done', updated_at: new Date().toISOString() }).eq('id', id));
+    toast('这次行动已经结束,收好了'); openProject(id);
+  };
+  const reo = mask.querySelector('[data-preopen]');
+  if (reo) reo.onclick = async () => {
+    await q(sb.from('projects').update({ status:'growing', updated_at: new Date().toISOString() }).eq('id', id));
+    openProject(id);
+  };
+}
 
 /* ================= 语言温室 ================= */
 async function calcStreak(){
