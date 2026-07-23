@@ -574,14 +574,25 @@ VIEWS.lang = async function(){
   const col = lang => {
     const todays = (items||[]).filter(i => i.lang===lang && i.created_at.slice(0,10)===today);
     const label = lang==='en'?'英语':'日语';
+    const fwd = lang==='en'?'英语':'日语';
     return `<div class="card">
       <div class="spread"><b>${label}</b><span class="muted">今天收了 ${todays.length} 条</span></div>
       ${todays.map(i=>`<div class="itemline"><div><div class="exp">${esc(i.expression)}</div><div class="muted">${esc(i.meaning||'')}</div></div></div>`).join('')}
       <div class="row" style="margin-top:12px">
-        <input class="small-in" id="add-${lang}" placeholder="新表达">
+        <span class="chip click sel" data-dir="${lang}" data-d="forward">${fwd}→中</span>
+        <span class="chip click" data-dir="${lang}" data-d="reverse">中→${fwd}</span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input class="small-in" id="add-${lang}" placeholder="输入${fwd}词,或切到中→${fwd}输中文">
         <input class="small-in" id="add-${lang}-m" placeholder="意思(可空)">
-        <button class="primary" data-addlang="${lang}">收</button>
-      </div></div>`;
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button data-look="${lang}" data-save="0">🔍 AI 查词</button>
+        <button class="primary" data-look="${lang}" data-save="1">✨ 查词并收录</button>
+        <button data-addlang="${lang}">直接收</button>
+      </div>
+      <div id="look-${lang}" class="note hidden" style="margin-top:10px"></div>
+      </div>`;
   };
   const ins = (insights||[])[0];
   $('#view').innerHTML = `
@@ -607,6 +618,47 @@ VIEWS.lang = async function(){
     const exp = $('#add-'+lang).value.trim(); if (!exp) return;
     await q(sb.from('lang_items').insert({ lang, expression: exp, meaning: $('#add-'+lang+'-m').value.trim() || null, source:'manual' }));
     await bumpCheckin(lang, 1); toast('收进温室了 🌱'); route();
+  });
+  // 方向切换
+  document.querySelectorAll('[data-dir]').forEach(c => c.onclick = () => {
+    document.querySelectorAll(`[data-dir="${c.dataset.dir}"]`).forEach(x => x.classList.toggle('sel', x === c));
+  });
+  // 保存一张查词卡到温室
+  const saveCard = async (lang, card) => {
+    const meaning = [card.pron, card.pos, card.meaning].filter(Boolean).join(' ');
+    const example = [card.example, card.example_cn].filter(Boolean).join(' / ');
+    await q(sb.from('lang_items').insert({ lang, expression: card.expression || '', meaning: meaning || null, example: example || null, source:'manual' }));
+    await bumpCheckin(lang, 1);
+  };
+  // AI 查词
+  document.querySelectorAll('[data-look]').forEach(b => b.onclick = async () => {
+    const lang = b.dataset.look, autoSave = b.dataset.save === '1';
+    const expr = $('#add-'+lang).value.trim();
+    if (!expr) return toast('先输入要查的词');
+    const dir = document.querySelector(`[data-dir="${lang}"].sel`)?.dataset.d || 'forward';
+    const box = $('#look-'+lang);
+    const btns = document.querySelectorAll(`[data-look="${lang}"]`);
+    btns.forEach(x => x.disabled = true);
+    box.classList.remove('hidden'); box.textContent = '查词中…';
+    try {
+      const { data, error } = await sb.functions.invoke('garden-ai', { body: { mode:'lookup', expression: expr, lang, direction: dir } });
+      if (error) throw new Error((await error.context?.json?.())?.error || error.message);
+      if (data?.error) throw new Error(data.error);
+      const c = data.card;
+      if (autoSave){
+        await saveCard(lang, c); toast('查好并收进温室 🌱'); route(); return;
+      }
+      box.innerHTML = `<div class="exp" style="font-size:16px">${esc(c.expression||expr)} <span class="muted" style="font-weight:400">${esc([c.pron,c.pos].filter(Boolean).join(' '))}</span></div>
+        <div style="margin:6px 0">${esc(c.meaning||'')}</div>
+        ${c.example?`<div class="muted" style="font-size:13px">例:${esc(c.example)}${c.example_cn?'<br>'+esc(c.example_cn):''}</div>`:''}
+        ${c.note?`<div class="muted" style="font-size:12.5px;margin-top:6px">💡 ${esc(c.note)}</div>`:''}
+        <div class="row" style="margin-top:10px"><button class="primary" id="save-${lang}">收进温室</button><button class="ghost" id="close-${lang}">不收了</button></div>`;
+      $('#save-'+lang).onclick = async () => { await saveCard(lang, c); toast('收进温室了 🌱'); route(); };
+      $('#close-'+lang).onclick = () => { box.classList.add('hidden'); box.innerHTML=''; };
+    } catch (e) {
+      box.textContent = '查词失败:' + e.message;
+    }
+    btns.forEach(x => x.disabled = false);
   });
   document.querySelectorAll('[data-flip]').forEach(b => b.onclick = () => {
     document.getElementById('mean-' + b.dataset.flip).classList.remove('hidden'); b.remove();
