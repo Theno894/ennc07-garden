@@ -316,7 +316,8 @@ VIEWS.today = async function(){
     (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000);
   const projCands = notSnoozed((projs||[]).map(p=>({t:'项目', title:p.name, sub:p.next_step||p.description||'', st:p.status, go:'proj', gid:p.id, sid:p.id})));
   const seedCands = notSnoozed((seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), sub:(e.content||'').slice(0,42), st:e.status, go:'grow', gid:e.id, sid:e.id})));
-  const langCands = notSnoozed(dueLang.map(i=>({t:i.lang==='en'?'英语':'日语', title:i.expression, sub:'点开翻面复习', st:'growing', go:'lang', gid:i.id, sid:i.id})));
+  // 语言是「一个复习任务」而不是固定某个词:队列会随复习动态变化,复习完自动完成
+  const langTask = (dueLang.length && !snoozed.includes('lang-review')) ? [{ t:'语言', title:'语言复习', sub:'点开走一遍到期队列', st:'growing', go:'lang', gid:'', sid:'lang-review' }] : [];
   const interleave = arrs => { const out=[]; for(let i=0;out.length<50;i++){ let any=false; for(const a of arrs){ if(a[i]){ out.push(a[i]); any=true; } } if(!any) break; } return out; };
   const energyNeed = {low:2, mid:3, high:5}[energy] || 3;
   const energyLabel = {low:'低能量',mid:'中等能量',high:'高能量'}[energy] || '';
@@ -324,7 +325,7 @@ VIEWS.today = async function(){
   // 选了能量才端菜;每天第一次(或能量变化时)选一次,之后固定不变
   let todo = acts.todo;
   if (energy && (!Array.isArray(todo) || acts.todoEnergy !== energy)){
-    const others = interleave([projCands, langCands]);        // 项目 + 到期语言
+    const others = interleave([projCands, langTask]);         // 项目 + 语言复习任务
     const seed = pickOne(seedCands);                           // 至多 1 颗灵感种子
     const list = seed ? [seed] : [];
     for (const o of others){ if (list.length >= energyNeed) break; list.push(o); }
@@ -333,7 +334,9 @@ VIEWS.today = async function(){
     await q(sb.from('daily_state').upsert({ date: today, energy, actions: acts, updated_at: new Date().toISOString() }), true);
   }
   if (!energy) todo = [];
-  const doneCount = todo.filter(x => doneToday.includes(x.sid)).length;
+  const langCleared = dueLang.length === 0;   // 到期词都复习完了
+  const isDone = x => doneToday.includes(x.sid) || (x.go === 'lang' && langCleared);
+  const doneCount = todo.filter(isDone).length;
   const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" style="flex:1;text-align:left"><b>${label}</b><br><span class="muted" style="font-size:12px">${tip}</span></button>`;
   $('#view').innerHTML = `
     <div class="eyebrow">${esc(greeting())}</div>
@@ -354,8 +357,8 @@ VIEWS.today = async function(){
       ${energy ? `<span class="muted">按 ${energyLabel} · 已完成 ${doneCount}/${todo.length}</span>` : ''}</div>
     <div class="grid g3">
       ${!energy ? '<div class="card"><div class="desc">先在上面选一个「今日能量」,我就端上刚刚好的量 🌱</div></div>'
-        : (todo.map((x,i)=>{ const done = doneToday.includes(x.sid); return `<div class="card projcard ${done?'card-done':''}" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${done?'<span class="chip done"><span class="dot"></span>已完成</span>':chip(x.st)}</div>
-        <h3 style="${done?'text-decoration:line-through;color:var(--mute)':''}">${esc(x.title)}</h3><div class="desc">${esc(x.sub||'')}</div>
+        : (todo.map((x,i)=>{ const done = isDone(x); const isL = x.go==='lang'; const sub = isL ? (langCleared ? '今天的词都复习完了 🌿' : `还有 ${dueLang.length} 个到期,点开继续`) : (x.sub||''); return `<div class="card projcard ${done?'card-done':''}" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${done?'<span class="chip done"><span class="dot"></span>已完成</span>':chip(x.st)}</div>
+        <h3 style="${done?'text-decoration:line-through;color:var(--mute)':''}">${esc(x.title)}</h3><div class="desc">${esc(sub)}</div>
         <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">${done?'↩ 撤销':'✓ 完成'}</button><button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button></div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':'去复习 →'}</span></div></div>`; }).join('')
         || '<div class="card"><div class="desc">今天没有待办。去「捕捉」写下第一句,或点「生长」逛逛你的灵感。</div></div>')}
     </div>
