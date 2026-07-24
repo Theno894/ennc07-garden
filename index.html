@@ -305,7 +305,7 @@ VIEWS.today = async function(){
   ]);
   const en = (checkins||[]).find(c=>c.lang==='en'), ja = (checkins||[]).find(c=>c.lang==='ja');
   const b = (brief||[])[0];
-  const energy = ds?.energy || 'mid';
+  const energy = ds?.energy || null;   // 今日能量:未选为 null,每天 0 点后自然重置(新日期无记录)
 
   // 每日固定待办:按能量定数量、至多 1 颗灵感种子;完成显示"已完成",不再往上顶新的
   let acts = ds?.actions || {};
@@ -318,12 +318,12 @@ VIEWS.today = async function(){
   const seedCands = notSnoozed((seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), sub:(e.content||'').slice(0,42), st:e.status, go:'grow', gid:e.id, sid:e.id})));
   const langCands = notSnoozed(dueLang.map(i=>({t:i.lang==='en'?'英语':'日语', title:i.expression, sub:'点开翻面复习', st:'growing', go:'lang', gid:i.id, sid:i.id})));
   const interleave = arrs => { const out=[]; for(let i=0;out.length<50;i++){ let any=false; for(const a of arrs){ if(a[i]){ out.push(a[i]); any=true; } } if(!any) break; } return out; };
-  const energyNeed = {low:2, mid:3, high:5}[energy];
-  const energyLabel = {low:'低能量',mid:'中等能量',high:'高能量'}[energy];
+  const energyNeed = {low:2, mid:3, high:5}[energy] || 3;
+  const energyLabel = {low:'低能量',mid:'中等能量',high:'高能量'}[energy] || '';
   const pickOne = arr => arr.length ? arr[Math.floor(Math.random()*arr.length)] : null;
-  // 只在每天第一次(或能量变化时)选一次,之后固定不变
+  // 选了能量才端菜;每天第一次(或能量变化时)选一次,之后固定不变
   let todo = acts.todo;
-  if (!Array.isArray(todo) || acts.todoEnergy !== energy){
+  if (energy && (!Array.isArray(todo) || acts.todoEnergy !== energy)){
     const others = interleave([projCands, langCands]);        // 项目 + 到期语言
     const seed = pickOne(seedCands);                           // 至多 1 颗灵感种子
     const list = seed ? [seed] : [];
@@ -332,6 +332,7 @@ VIEWS.today = async function(){
     acts = { ...acts, todo, todoEnergy: energy };
     await q(sb.from('daily_state').upsert({ date: today, energy, actions: acts, updated_at: new Date().toISOString() }), true);
   }
+  if (!energy) todo = [];
   const doneCount = todo.filter(x => doneToday.includes(x.sid)).length;
   const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" style="flex:1;text-align:left"><b>${label}</b><br><span class="muted" style="font-size:12px">${tip}</span></button>`;
   $('#view').innerHTML = `
@@ -349,13 +350,14 @@ VIEWS.today = async function(){
         </div>
       </div>
     </div>
-    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">此刻值得照料的${todo.length ? '' : '——今天很轻'}</h2>
-      <span class="muted">按 ${energyLabel} · 已完成 ${doneCount}/${todo.length}</span></div>
+    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">此刻值得照料的</h2>
+      ${energy ? `<span class="muted">按 ${energyLabel} · 已完成 ${doneCount}/${todo.length}</span>` : ''}</div>
     <div class="grid g3">
-      ${todo.map((x,i)=>{ const done = doneToday.includes(x.sid); return `<div class="card projcard ${done?'card-done':''}" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${done?'<span class="chip done"><span class="dot"></span>已完成</span>':chip(x.st)}</div>
+      ${!energy ? '<div class="card"><div class="desc">先在上面选一个「今日能量」,我就端上刚刚好的量 🌱</div></div>'
+        : (todo.map((x,i)=>{ const done = doneToday.includes(x.sid); return `<div class="card projcard ${done?'card-done':''}" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${done?'<span class="chip done"><span class="dot"></span>已完成</span>':chip(x.st)}</div>
         <h3 style="${done?'text-decoration:line-through;color:var(--mute)':''}">${esc(x.title)}</h3><div class="desc">${esc(x.sub||'')}</div>
         <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">${done?'↩ 撤销':'✓ 完成'}</button><button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button></div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':'去复习 →'}</span></div></div>`; }).join('')
-        || '<div class="card"><div class="desc">今天没有待办。去「捕捉」写下第一句,或点「生长」逛逛你的灵感。</div></div>'}
+        || '<div class="card"><div class="desc">今天没有待办。去「捕捉」写下第一句,或点「生长」逛逛你的灵感。</div></div>')}
     </div>
     <h2 class="sec">邮件早报</h2>
     <div class="${b?'card':'note'}">
@@ -387,11 +389,19 @@ VIEWS.today = async function(){
     if (ev.target.closest('[data-dismiss]') || ev.target.closest('[data-done]')) return;
     const g = c.dataset.go;
     if (g === 'proj'){ location.hash = '#projects'; setTimeout(() => openProject(c.dataset.gid), 600); }
-    else if (g === 'lang'){ startReviewOne(c.dataset.sid); }
+    else if (g === 'lang'){ startReviewQueue(c.dataset.sid); }
     else location.hash = '#grow';
   });
 };
-async function startReviewOne(id){ const { data } = await sb.from('lang_items').select('*').eq('id', id).maybeSingle(); if (data) startReview([data]); else toast('这个词找不到了'); }
+// 从今日进入:复习整个到期队列(从点的那个词开始),可随时点「结束复习」停下
+async function startReviewQueue(startId){
+  const items = (await q(sb.from('lang_items').select('*').eq('mastered', false))) || [];
+  const due = items.filter(i => !i.last_reviewed_at ||
+    (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000);
+  if (!due.length){ toast('今天没有要复习的词'); return; }
+  if (startId){ const k = due.findIndex(x => x.id === startId); if (k > 0){ const [it] = due.splice(k,1); due.unshift(it); } }
+  startReview(due);
+}
 
 /* ================= 捕捉 ================= */
 VIEWS.capture = async function(){
@@ -937,7 +947,7 @@ function startReview(list){
     const i = list[idx];
     document.body.insertAdjacentHTML('beforeend', `
      <div class="modal-mask"><div class="modal" style="max-width:520px;text-align:center">
-      <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">${idx+1} / ${list.length}</span></div>
+      <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><div class="row" style="gap:10px"><span class="muted">${idx+1} / ${list.length}</span><button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
       <h2 style="margin:28px 0 10px;font-size:26px">${esc(i.expression)}</h2>
       <div id="rev-mean" class="hidden"><div style="margin:6px 0">${esc(i.meaning||'(没写意思,凭感觉回想)')}</div>${i.example?`<div class="muted" style="font-size:13px">${esc(i.example)}</div>`:''}</div>
       <button id="rev-flip" class="ghost" style="margin:6px 0 18px">翻面看答案 ↺</button>
@@ -950,6 +960,7 @@ function startReview(list){
     const mask = document.querySelector('.modal-mask');
     mask.addEventListener('click', ev => { if (ev.target === mask){ mask.remove(); route(); } });
     mask.querySelector('#rev-flip').onclick = () => mask.querySelector('#rev-mean').classList.remove('hidden');
+    mask.querySelector('[data-end]').onclick = () => { mask.remove(); toast('今天复习就到这 🌿'); route(); };
     mask.querySelectorAll('[data-r]').forEach(b => b.onclick = async () => { await srsMark(i, b.dataset.r); idx++; render(); });
   };
   render();
