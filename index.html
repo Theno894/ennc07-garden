@@ -754,21 +754,46 @@ async function recomputeProgress(id){
   await q(sb.from('projects').update({ progress: prog, status: prog>=100?'done':'growing', updated_at: new Date().toISOString() }).eq('id', id));
 }
 function closeModal(refresh){ const m = document.querySelector('.modal-mask'); if (m) m.remove(); if (refresh) route(); }
-/* 一条主线:按父子层级渲染任务,标出来源(✦AI / ✎你) */
+/* 一条主线:只显示还没走的路,勾掉会落进「走过的路」。✦AI / ✎你;▶ 正在做置顶 */
+const daysSince = ts => Math.max(0, Math.floor((Date.now() - new Date(ts).getTime())/86400000));
 function renderTasks(all, parent, depth){
-  const kids = all.filter(t => (t.parent_id || null) === parent);
+  let kids = all.filter(t => (t.parent_id || null) === parent && !t.done);
   if (!kids.length) return '';
+  if (depth === 0) kids = [...kids.filter(t=>t.started_at), ...kids.filter(t=>!t.started_at)];  // 正在做的排前面
   return kids.map(t => {
     const isAI = t.source === 'ai';
-    const hasKids = all.some(x => x.parent_id === t.id);
+    const hasKids = all.some(x => x.parent_id === t.id && !x.done);
+    const doing = !!t.started_at;
     return `<div class="check" style="padding-left:${depth*20}px">
-      <input type="checkbox" data-task="${t.id}" ${t.done?'checked':''}>
-      <span class="tt ${t.done?'done':''}">${esc(t.title)}
-        <span class="muted" style="font-size:11px;margin-left:4px" title="${isAI?'AI 拆解':'你添加'}">${isAI?'✦':'✎'}</span></span>
+      <input type="checkbox" data-task="${t.id}">
+      <span class="tt">${doing?'<span style="color:var(--grow)">▶ </span>':''}${esc(t.title)}
+        <span class="muted" style="font-size:11px;margin-left:4px" title="${isAI?'AI 拆解':'你添加'}">${isAI?'✦':'✎'}</span>
+        ${doing?`<span class="muted" style="font-size:11px;margin-left:4px">做了 ${daysSince(t.started_at)} 天</span>`:''}</span>
+      <button class="ghost" data-tdoing="${t.id}" data-on="${doing?1:0}" style="font-size:12px" title="${doing?'取消正在做':'标记正在做'}">${doing?'▪':'▶'}</button>
       ${depth<2&&!hasKids ? `<button class="ghost" data-tsub="${t.id}" style="font-size:12px" title="再拆一层">⌄</button>` : ''}
       <button class="ghost" data-tdel="${t.id}" style="font-size:12px">删</button></div>`
       + renderTasks(all, t.id, depth+1);
   }).join('');
+}
+/* 走过的路:完成的任务 + 手写的记录,按日期分组 */
+function renderPath(doneTasks, notes){
+  const dayLabel = d => { const t=todayStr(); const y=new Date(Date.now()-86400000).toISOString().slice(0,10);
+    return d===t?'今天':d===y?'昨天':d.slice(5).replace('-','/'); };
+  const items = [
+    ...doneTasks.map(t=>({ kind:'task', id:t.id, text:t.title, src:t.source, at:t.done_at||t.created_at })),
+    ...notes.map(n=>({ kind:'note', id:n.id, text:n.note, at:n.created_at })),
+  ].sort((a,b)=> new Date(b.at) - new Date(a.at));
+  if (!items.length) return '<div class="muted">还没有走过的路。做完一件,或写下今天发生了什么。</div>';
+  const groups = {};
+  items.forEach(i=>{ const d=new Date(i.at).toISOString().slice(0,10); (groups[d]=groups[d]||[]).push(i); });
+  return Object.keys(groups).sort().reverse().map(d=>`
+    <div style="margin-top:12px"><div class="washi" style="font-size:12px">${dayLabel(d)}</div>
+    <div class="timeline" style="margin-top:8px">${groups[d].map(i=> i.kind==='task'
+      ? `<div class="ev"><div class="spread"><div class="desc" style="flex:1"><span style="color:var(--done)">✓</span> ${esc(i.text)} <span class="muted" style="font-size:11px">${i.src==='ai'?'✦':'✎'}</span></div>
+          <button class="ghost" data-tback="${i.id}" style="font-size:12px;flex:0 0 auto" title="放回主线">↑</button></div></div>`
+      : `<div class="ev"><div class="spread"><div class="desc" style="flex:1">${esc(i.text)}</div>
+          <div class="row" style="gap:6px;flex:0 0 auto"><button class="ghost" data-n2t="${i.id}" style="font-size:12px">→待办</button><button class="ghost" data-nedit="${i.id}" style="font-size:12px">改</button><button class="ghost" data-ndel="${i.id}" style="font-size:12px;color:var(--danger)">×</button></div></div></div>`
+    ).join('')}</div></div>`).join('');
 }
 async function openProject(id){
   const [p, ups, tasks] = await Promise.all([
@@ -796,14 +821,13 @@ async function openProject(id){
     <div id="ai-out" class="note hidden" style="margin-top:12px;white-space:pre-wrap"></div>
 
     <h3 style="font-family:var(--serif);font-weight:600;margin:22px 0 4px">接下来 · 主线</h3>
-    <div class="muted" style="font-size:12.5px;margin-bottom:6px">✦ 是 AI 拆的,✎ 是你加的;勾完自动记进「走过的路」,某条太大可以点 ⌄ 再拆一层。</div>
-    ${total ? renderTasks(tasks||[], null, 0)
-      : '<div class="muted">还没有拆解。自己加一条,或让上面的 AI 帮你拆。</div>'}
+    <div class="muted" style="font-size:12.5px;margin-bottom:6px">✦ AI 拆的 · ✎ 你加的 · ▶ 标记正在做 · ⌄ 再拆细一层;勾掉会落进「走过的路」。</div>
+    ${(tasks||[]).some(t=>!t.done) ? renderTasks(tasks||[], null, 0)
+      : (total ? '<div class="muted">主线走完了 🌿 都在下面的「走过的路」里。</div>' : '<div class="muted">还没有拆解。自己加一条,或让上面的 AI 帮你拆。</div>')}
     <div class="row" style="margin-top:12px"><input class="small-in" id="new-task" placeholder="加一个子任务"><button class="primary" data-tadd>加</button></div>
 
     <h3 style="font-family:var(--serif);font-weight:600;margin:24px 0 6px">走过的路</h3>
-    ${visibleUps.length ? `<div class="timeline">${visibleUps.map(u=>`<div class="ev"><div class="spread"><div class="desc" style="flex:1">${esc(u.note)}</div><div class="row" style="gap:6px;flex:0 0 auto"><button class="ghost" data-n2t="${u.id}" style="font-size:12px" title="变成待办">→待办</button><button class="ghost" data-nedit="${u.id}" style="font-size:12px">改</button><button class="ghost" data-ndel="${u.id}" style="font-size:12px;color:var(--danger)">×</button></div></div><div class="muted" style="font-size:12px">${fmtMD(u.created_at)}</div></div>`).join('')}</div>`
-      : '<div class="muted">还没有记录。每做一步,写一句留在这里。</div>'}
+    ${renderPath((tasks||[]).filter(t=>t.done), visibleUps)}
     <div class="row" style="margin-top:12px"><input class="small-in" id="new-note" placeholder="记录刚做的一步"><button data-nadd>记下</button></div>
 
     <div class="row" style="margin-top:22px;border-top:1px solid var(--line);padding-top:14px">
@@ -816,15 +840,21 @@ async function openProject(id){
   mask.addEventListener('click', ev => { if (ev.target === mask) closeModal(true); });
   mask.querySelector('[data-mclose]').onclick = () => closeModal(true);
   mask.querySelectorAll('[data-task]').forEach(cb => cb.onchange = async () => {
-    const t = (tasks||[]).find(x => x.id === cb.dataset.task);
-    await q(sb.from('project_tasks').update({ done: cb.checked }).eq('id', cb.dataset.task));
-    // 勾掉 → 自动在「走过的路」留痕;取消 → 撤掉那条
-    if (t){
-      const trace = '✓ ' + t.title;
-      if (cb.checked) await q(sb.from('project_updates').insert({ project_id: id, note: trace }), true);
-      else { const hit = (ups||[]).find(u => u.note === trace); if (hit) await q(sb.from('project_updates').delete().eq('id', hit.id), true); }
-    }
-    await recomputeProgress(id); openProject(id);
+    const tid = cb.dataset.task;
+    // 勾掉 → 落进「走过的路」(连同它的子任务),清掉"正在做"
+    await q(sb.from('project_tasks').update({ done: true, done_at: new Date().toISOString(), started_at: null }).eq('id', tid));
+    const kids = (tasks||[]).filter(x => x.parent_id === tid && !x.done);
+    for (const k of kids) await q(sb.from('project_tasks').update({ done:true, done_at:new Date().toISOString(), started_at:null }).eq('id', k.id), true);
+    toast('落进走过的路了 🍂'); await recomputeProgress(id); openProject(id);
+  });
+  mask.querySelectorAll('[data-tback]').forEach(b => b.onclick = async () => {
+    await q(sb.from('project_tasks').update({ done:false, done_at:null }).eq('id', b.dataset.tback));
+    toast('放回主线了'); await recomputeProgress(id); openProject(id);
+  });
+  mask.querySelectorAll('[data-tdoing]').forEach(b => b.onclick = async () => {
+    const on = b.dataset.on === '1';
+    await q(sb.from('project_tasks').update({ started_at: on ? null : new Date().toISOString() }).eq('id', b.dataset.tdoing));
+    toast(on ? '取消了正在做' : '标记为正在做 ▶'); openProject(id);
   });
   mask.querySelectorAll('[data-tsub]').forEach(b => b.onclick = async () => {
     const pid = b.dataset.tsub; const parent = (tasks||[]).find(x => x.id === pid);
