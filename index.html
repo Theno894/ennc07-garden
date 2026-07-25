@@ -632,7 +632,10 @@ async function startReviewQueue(startId){
 /* ================= 捕捉 ================= */
 VIEWS.capture = async function(){
   const recent = await q(sb.from('entries').select('*').order('created_at',{ascending:false}).limit(5)) || [];
-  const KINDS = ['灵感','学习','项目','生活','英语','日语'];
+  const KINDS = ['灵感','学习','读书','项目','生活','英语','日语'];
+  // 已经记过的书名(从 tags 里收集,去重、最近的在前)
+  const books = [...new Set((await q(sb.from('entries').select('tags,created_at').eq('kind','读书').order('created_at',{ascending:false}), true) || [])
+    .flatMap(e => (e.tags||[]).filter(t => t.startsWith('《'))))].slice(0,12);
   $('#view').innerHTML = `
     <div class="eyebrow">随手记</div>
     <h1 class="hero">只需要说一次,花园会先保留原句</h1>
@@ -641,6 +644,10 @@ VIEWS.capture = async function(){
       <div class="card">
         <textarea id="cap-text" placeholder="写下一句话。它可以是想法、进展、身体感受,或刚学到的一句表达……"></textarea>
         <div class="row" style="margin:14px 0">${KINDS.map(k=>`<span class="chip click" data-kind="${k}">${k}</span>`).join('')}</div>
+        <div id="book-box" class="hidden" style="margin-bottom:12px">
+          <input class="small-in" id="book-in" placeholder="书名(会记在这条下面)" style="width:100%">
+          ${books.length?`<div class="row" style="margin-top:8px">${books.map(b=>`<span class="chip click" data-book="${esc(b)}">${esc(b)}</span>`).join('')}</div>`:'<div class="muted" style="margin-top:6px;font-size:12.5px">第一本书,输入后以后就能一点即选 📖</div>'}
+        </div>
         <div class="spread"><span class="muted" id="cap-hint">写点什么,我猜猜它属于哪里</span><button class="primary" id="cap-save">种进花园</button></div>
       </div>
       <div class="card"><div class="muted">最近留下的原句</div>
@@ -654,12 +661,21 @@ VIEWS.capture = async function(){
     const ascii = (t.match(/[a-zA-Z\s'.,!?-]/g)||[]).length;
     if (t.length > 4 && ascii / t.length > 0.7) return '英语';
     if (/项目|上线|进度|交付|部署/.test(t)) return '项目';
+    if (/看了|读到|书里|这本书|作者/.test(t)) return '读书';
     if (/学到|复习|背|读了|课/.test(t)) return '学习';
     if (/吃|睡|散步|家|买|身体/.test(t)) return '生活';
     return '灵感';
   };
-  const syncChips = () => chips.forEach(c => c.classList.toggle('sel', c.dataset.kind === kind));
-  chips.forEach(c => c.onclick = () => { kind = c.dataset.kind; syncChips(); });
+  const syncChips = () => {
+    chips.forEach(c => c.classList.toggle('sel', c.dataset.kind === kind));
+    $('#book-box').classList.toggle('hidden', kind !== '读书');
+  };
+  chips.forEach(c => c.onclick = () => { kind = c.dataset.kind; syncChips(); if (kind==='读书') $('#book-in').focus(); });
+  document.querySelectorAll('[data-book]').forEach(b => b.onclick = () => {
+    $('#book-in').value = b.dataset.book;
+    document.querySelectorAll('[data-book]').forEach(x => x.classList.toggle('sel', x === b));
+  });
+  keepDraft($('#book-in'), 'book');
   document.querySelectorAll('[data-seed]').forEach(el => el.onclick = () => openSeed(el.dataset.seed));
   keepDraft($('#cap-text'), 'capture');   // 没保存的字不会丢
   $('#cap-text').addEventListener('input', e => { if (!kind) { $('#cap-hint').textContent = '看起来像:' + guess(e.target.value); } });
@@ -678,8 +694,13 @@ VIEWS.capture = async function(){
         .then(({ data }) => { if (data?.card){ const c=data.card; const meaning=[c.pron,c.pos,c.meaning].filter(Boolean).join(' '); const example=[c.example,c.example_cn].filter(Boolean).join(' / '); sb.from('lang_items').update({ meaning: meaning||null, example: example||null }).eq('id', ins.id); } })
         .catch(()=>{});
     } else {
-      await q(sb.from('entries').insert({ kind: k, content: text, title: text.slice(0, 24), status: 'seed' }));
-      toast('已种下,先安静待在「' + k + '」里');
+      const tags = [];
+      if (k === '读书'){
+        let bk = ($('#book-in')?.value||'').trim();
+        if (bk){ if (!bk.startsWith('《')) bk = '《' + bk.replace(/[《》]/g,'') + '》'; tags.push(bk); }
+      }
+      await q(sb.from('entries').insert({ kind: k, content: text, title: text.slice(0, 24), status: 'seed', tags }));
+      toast(k==='读书' && tags.length ? '收进 ' + tags[0] + ' 了 📖' : '已种下,先安静待在「' + k + '」里');
     }
     $('#cap-text').value = ''; clearDraft('capture'); kind = null; syncChips(); route();
   };
@@ -703,7 +724,7 @@ VIEWS.grow = async function(filter){
     <h1 class="hero">最近的种子,不必马上成为答案</h1>
     <p class="sub">${star?'每颗种子一颗星,同主题聚成星座;点星星打开那条灵感。':'默认只留原句;点开卡片,再整理它的状态与下一步。'}</p>
     <div class="spread" style="margin-bottom:16px">
-      <div class="row">${star?'':['全部','灵感','学习','项目','生活'].map(k=>`<span class="chip click ${k===f?'sel':''}" data-f="${k}">${k}</span>`).join('')}</div>
+      <div class="row">${star?'':['全部','灵感','学习','读书','项目','生活'].map(k=>`<span class="chip click ${k===f?'sel':''}" data-f="${k}">${k}</span>`).join('')}</div>
       <div class="row"><span class="chip click ${star?'':'sel'}" data-view="list">列表</span><span class="chip click ${star?'sel':''}" data-view="star">✦ 星图</span></div>
     </div>
     ${star ? '<div id="starwrap" class="card" style="padding:6px"></div>' : `<div class="grid g2">
