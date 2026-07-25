@@ -387,6 +387,7 @@ const VIEWS = {};
 const langUI = { libOpen:false, q:'', filter:'全部', sort:'recent' };  // 词库 UI 状态(跨渲染保留)
 let growView = 'list';  // 生长页:列表 or 星图
 let gratHistOpen = false;  // 感恩日记:过往是否展开
+let gratExtra = 0;         // 感恩日记:额外加了几栏
 async function route(){
   if (!session) return;
   renderNav();
@@ -413,6 +414,7 @@ VIEWS.today = async function(){
   ]);
   const grat = (gratAll||[]).find(g => g.date === today);
   const gratPast = (gratAll||[]).filter(g => g.date !== today).slice(0,14);
+  const gratRows = Math.max(3, (grat?.items||[]).length + (gratExtra||0));
   const winsToday = (winsAll||[]).filter(w => w.date === today);
   const seedsToday = (seeds||[]).filter(e => (e.created_at||'').slice(0,10) === today);
   const winsBefore = (winsAll||[]).filter(w => w.date !== today).slice(0,5);
@@ -527,14 +529,16 @@ VIEWS.today = async function(){
       <div class="card">
         <div><div class="doodle"><svg viewBox="0 0 20 18" width="18" style="color:var(--pink)"><path d="M10 16S2 11 2 6.4C2 4 3.9 2 6.2 2c1.5 0 2.8.8 3.8 2 1-1.2 2.3-2 3.8-2C16.1 2 18 4 18 6.4 18 11 10 16 10 16z" fill="currentColor"/></svg>
           <b style="font-family:var(--hand-zh);font-size:19px">感恩日记</b></div>
-          <div class="muted" style="font-size:12.5px;margin-top:2px">每天三件想感谢的小事,浇灌心里的花园</div></div>
+          <div class="muted" style="font-size:12.5px;margin-top:2px">写下今天想感谢的小事,多少都可以</div></div>
         <div class="wave"></div>
-        <div class="washi">${gratItems.length ? '今天已经种下 '+gratItems.filter(Boolean).length+' 颗感谢 🌸' : '今天,种下第一颗感谢吧 🌸'}</div>
-        ${[0,1,2].map(i=>`<div class="row" style="margin-top:10px;align-items:center">
+        <div class="washi">${gratItems.filter(Boolean).length ? '今天已经种下 '+gratItems.filter(Boolean).length+' 颗感谢 🌸' : '今天,种下第一颗感谢吧 🌸'}</div>
+        <div id="grat-rows">
+        ${Array.from({length: gratRows}).map((_,i)=>`<div class="row" style="margin-top:10px;align-items:center">
           <span class="chip" style="flex:0 0 auto">${i+1}</span>
-          <input class="small-in" id="grat-${i}" value="${esc(gratItems[i]||'')}" placeholder="${i===0?'今天想感谢的第一件小事…':i===1?'第二件小事,可只填一条哦…':'第三件小事,想到再写…'}">
+          <input class="small-in" id="grat-${i}" value="${esc(gratItems[i]||'')}" placeholder="${i===0?'今天想感谢的第一件小事…':i===1?'第二件小事,可只填一条哦…':i===2?'第三件小事,想到再写…':'还想到了什么…'}">
         </div>`).join('')}
-        <button class="primary" id="grat-save" style="margin-top:12px">收进日记本 ♡</button>
+        </div>
+        <div class="row" style="margin-top:12px"><button class="primary" id="grat-save">收进日记本 ♡</button><button class="ghost" id="grat-more">＋ 再加一条</button></div>
         <div class="spread" style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px">
           <span class="muted" style="font-size:13px">📖 翻翻看</span>
           <button class="ghost" id="grat-hist" style="font-size:12.5px">${gratHistOpen?'收起 ▲':'过往的感谢 ▼'}</button>
@@ -547,7 +551,8 @@ VIEWS.today = async function(){
       </div>
     </div>`;
   keepDraft($('#win-in'), 'win');
-  [0,1,2].forEach(i => keepDraft($('#grat-'+i), 'grat'+i));
+  Array.from({length: gratRows}).forEach((_,i) => keepDraft($('#grat-'+i), 'grat'+i));
+  $('#grat-more') && ($('#grat-more').onclick = () => { gratExtra++; route(); });
   $('#grat-hist') && ($('#grat-hist').onclick = () => {
     gratHistOpen = !gratHistOpen;
     $('#grat-hist-wrap').classList.toggle('hidden', !gratHistOpen);
@@ -565,11 +570,12 @@ VIEWS.today = async function(){
     await q(sb.from('wins').delete().eq('id', b.dataset.wdel2)); route();
   });
   $('#grat-save').onclick = async () => {
-    const items = [0,1,2].map(i => $('#grat-'+i).value.trim()).filter(Boolean);
+    const items = Array.from({length: gratRows}).map((_,i) => ($('#grat-'+i)?.value||'').trim()).filter(Boolean);
     if (!items.length) return toast('先写一件小事吧');
     celebrate($('#grat-save'), ['♡','✦','♡','✧']);
     await q(sb.from('gratitude').upsert({ date: today, items, updated_at: new Date().toISOString() }));
-    [0,1,2].forEach(i => clearDraft('grat'+i));
+    Array.from({length: gratRows}).forEach((_,i) => clearDraft('grat'+i));
+    gratExtra = 0;
     toast('收进日记本了 ♡'); route();
   };
   document.querySelectorAll('[data-energy]').forEach(btn => btn.onclick = async () => {
