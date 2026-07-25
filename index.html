@@ -217,6 +217,19 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const todayStr = () => { const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
 const fmtMD = s => { if(!s) return ''; const d = new Date(s); return (d.getMonth()+1)+'/'+String(d.getDate()).padStart(2,'0'); };
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+/* 草稿自动保存:输入框里没保存的字,刷新/切后台/黑屏都不会丢 */
+function keepDraft(el, key){
+  if (!el) return;
+  const k = 'garden-draft:' + key;
+  const saved = localStorage.getItem(k);
+  if (saved && !el.value) el.value = saved;
+  const save = () => { el.value ? localStorage.setItem(k, el.value) : localStorage.removeItem(k); };
+  el.addEventListener('input', save);
+  el.addEventListener('blur', save);
+  document.addEventListener('visibilitychange', save);
+  window.addEventListener('pagehide', save);
+}
+function clearDraft(key){ localStorage.removeItem('garden-draft:' + key); }
 function greeting(){
   const h = new Date().getHours();
   const g = h<5?'夜深了':h<11?'早安':h<13?'午安':h<18?'午后好':h<23?'晚上好':'夜深了';
@@ -463,10 +476,12 @@ VIEWS.today = async function(){
         <div class="muted" style="margin-top:10px;font-size:12.5px">🌱 把每天的小感谢存起来,花园就会慢慢长大 ♡</div>
       </div>
     </div>`;
+  keepDraft($('#win-in'), 'win');
+  [0,1,2].forEach(i => keepDraft($('#grat-'+i), 'grat'+i));
   const addWin = async () => {
     const v = $('#win-in').value.trim(); if (!v) return;
     await q(sb.from('wins').insert({ date: today, text: v }));
-    toast('记下了,你做到了 🏆'); route();
+    clearDraft('win'); toast('记下了,你做到了 🏆'); route();
   };
   $('#win-add').onclick = addWin;
   $('#win-in').addEventListener('keydown', e => { if (e.key==='Enter') addWin(); });
@@ -477,6 +492,7 @@ VIEWS.today = async function(){
     const items = [0,1,2].map(i => $('#grat-'+i).value.trim()).filter(Boolean);
     if (!items.length) return toast('先写一件小事吧');
     await q(sb.from('gratitude').upsert({ date: today, items, updated_at: new Date().toISOString() }));
+    [0,1,2].forEach(i => clearDraft('grat'+i));
     toast('收进日记本了 ♡'); route();
   };
   document.querySelectorAll('[data-energy]').forEach(btn => btn.onclick = async () => {
@@ -548,7 +564,8 @@ VIEWS.capture = async function(){
   };
   const syncChips = () => chips.forEach(c => c.classList.toggle('sel', c.dataset.kind === kind));
   chips.forEach(c => c.onclick = () => { kind = c.dataset.kind; syncChips(); });
-  $('#cap-text').oninput = e => { if (!kind) { $('#cap-hint').textContent = '看起来像:' + guess(e.target.value); } };
+  keepDraft($('#cap-text'), 'capture');   // 没保存的字不会丢
+  $('#cap-text').addEventListener('input', e => { if (!kind) { $('#cap-hint').textContent = '看起来像:' + guess(e.target.value); } });
   $('#cap-save').onclick = async () => {
     const text = $('#cap-text').value.trim();
     if (!text) return toast('先写点什么');
@@ -566,7 +583,7 @@ VIEWS.capture = async function(){
       await q(sb.from('entries').insert({ kind: k, content: text, title: text.slice(0, 24), status: 'seed' }));
       toast('已种下,先安静待在「' + k + '」里');
     }
-    $('#cap-text').value = ''; kind = null; syncChips(); route();
+    $('#cap-text').value = ''; clearDraft('capture'); kind = null; syncChips(); route();
   };
 };
 async function bumpCheckin(lang, n){
@@ -772,7 +789,7 @@ async function openProject(id){
     <div class="row" style="margin-top:12px"><input class="small-in" id="new-task" placeholder="加一个子任务"><button class="primary" data-tadd>加</button></div>
 
     <h3 style="font-family:var(--serif);font-weight:600;margin:24px 0 6px">脉络 · 已经做过的</h3>
-    ${visibleUps.length ? `<div class="timeline">${visibleUps.map(u=>`<div class="ev"><div class="desc">${esc(u.note)}</div><div class="muted" style="font-size:12px">${fmtMD(u.created_at)}</div></div>`).join('')}</div>`
+    ${visibleUps.length ? `<div class="timeline">${visibleUps.map(u=>`<div class="ev"><div class="spread"><div class="desc" style="flex:1">${esc(u.note)}</div><div class="row" style="gap:6px;flex:0 0 auto"><button class="ghost" data-nedit="${u.id}" style="font-size:12px">改</button><button class="ghost" data-ndel="${u.id}" style="font-size:12px;color:var(--danger)">×</button></div></div><div class="muted" style="font-size:12px">${fmtMD(u.created_at)}</div></div>`).join('')}</div>`
       : '<div class="muted">还没有记录。每做一步,写一句留在这里。</div>'}
     <div class="row" style="margin-top:12px"><input class="small-in" id="new-note" placeholder="记录刚做的一步"><button data-nadd>记下</button></div>
 
@@ -795,19 +812,35 @@ async function openProject(id){
   });
   const addTask = async () => {
     const v = mask.querySelector('#new-task').value.trim(); if (!v) return;
+    clearDraft('ptask-'+id);
     await q(sb.from('project_tasks').insert({ project_id: id, title: v }));
     await recomputeProgress(id); openProject(id);
   };
   mask.querySelector('[data-tadd]').onclick = addTask;
   mask.querySelector('#new-task').addEventListener('keydown', e => { if (e.key==='Enter') addTask(); });
+  keepDraft(mask.querySelector('#new-note'), 'pnote-'+id);
+  keepDraft(mask.querySelector('#new-task'), 'ptask-'+id);
   const addNote = async () => {
     const v = mask.querySelector('#new-note').value.trim(); if (!v) return;
+    clearDraft('pnote-'+id);
     await q(sb.from('project_updates').insert({ project_id: id, note: v }));
     await q(sb.from('projects').update({ updated_at: new Date().toISOString() }).eq('id', id));
     openProject(id);
   };
   mask.querySelector('[data-nadd]').onclick = addNote;
   mask.querySelector('#new-note').addEventListener('keydown', e => { if (e.key==='Enter') addNote(); });
+  mask.querySelectorAll('[data-nedit]').forEach(b => b.onclick = async () => {
+    const cur = (ups||[]).find(u => u.id === b.dataset.nedit);
+    const v = prompt('修改这一步:', cur?.note || ''); if (v === null) return;
+    if (!v.trim()) return toast('内容不能为空');
+    await q(sb.from('project_updates').update({ note: v.trim() }).eq('id', b.dataset.nedit));
+    toast('改好了'); openProject(id);
+  });
+  mask.querySelectorAll('[data-ndel]').forEach(b => b.onclick = async () => {
+    if (!confirm('删掉这条记录?')) return;
+    await q(sb.from('project_updates').delete().eq('id', b.dataset.ndel));
+    openProject(id);
+  });
   mask.querySelectorAll('[data-ai]').forEach(b => b.onclick = async () => {
     const mode = b.dataset.ai;
     const label = b.textContent;
