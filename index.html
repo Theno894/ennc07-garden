@@ -336,6 +336,13 @@ VIEWS.today = async function(){
     q(sb.from('mail_briefs').select('*').order('date',{ascending:false}).limit(1)),
     q(sb.from('lang_items').select('*').eq('mastered', false)),
   ]);
+  const [winsAll, grat] = await Promise.all([
+    q(sb.from('wins').select('*').order('created_at',{ascending:false}), true),
+    q(sb.from('gratitude').select('*').eq('date', today).maybeSingle(), true),
+  ]);
+  const winsToday = (winsAll||[]).filter(w => w.date === today);
+  const winsBefore = (winsAll||[]).filter(w => w.date !== today).slice(0,5);
+  const gratItems = grat?.items || [];
   const en = (checkins||[]).find(c=>c.lang==='en'), ja = (checkins||[]).find(c=>c.lang==='ja');
   const b = (brief||[])[0];
   const energy = ds?.energy || null;   // 今日能量:未选为 null,每天 0 点后自然重置(新日期无记录)
@@ -424,7 +431,54 @@ VIEWS.today = async function(){
       ${b ? `<div class="spread"><b>${esc(b.date)} · 重要邮件 ${b.important_count} 封</b></div>
              <div class="desc" style="margin-top:8px;white-space:pre-wrap">${esc(b.summary_md||'')}</div>`
           : `早报还没送到过。Claude 每天早上 8 点会扫一遍邮箱,把值得看的放在这里。`}
+    </div>
+
+    <h2 class="sec">照料自己</h2>
+    <div class="grid g2">
+      <div class="card">
+        <div class="spread">
+          <div><div class="doodle"><svg viewBox="0 0 24 24" width="19" style="color:var(--yellow)"><path d="M7 4h10v4a5 5 0 0 1-10 0V4z" fill="currentColor"/><path d="M12 13v4M9 20h6" stroke="var(--trunk)" stroke-width="2" stroke-linecap="round"/><path d="M7 5H4.5c0 2.2 1.2 3.6 2.8 3.9M17 5h2.5c0 2.2-1.2 3.6-2.8 3.9" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+            <b style="font-family:var(--hand-zh);font-size:19px">今天我做到了</b></div>
+            <div class="muted" style="font-size:12.5px;margin-top:2px">记下一件小事,肯定自己的行动</div></div>
+        </div>
+        <div class="wave"></div>
+        <div class="row" style="margin-bottom:10px"><input class="small-in" id="win-in" placeholder="今天我做到了…"><button class="primary" id="win-add">记一笔 ✎</button></div>
+        <div class="washi">今天已经积累了 ${winsToday.length} 个做到了 ♡</div>
+        ${winsToday.length ? winsToday.map(w=>`<div class="itemline"><div class="desc">${esc(w.text)}</div><button class="ghost" data-wdel2="${w.id}" style="font-size:12px">×</button></div>`).join('')
+          : '<div class="dashed" style="margin-top:12px;padding:16px;text-align:center"><div class="muted">今天还没有「做到了」<br><span style="font-size:12.5px">做到一件小事,就来告诉我吧</span></div></div>'}
+        ${winsBefore.length ? `<div class="muted" style="margin-top:12px;font-size:12.5px">🌙 之前的我</div>${winsBefore.map(w=>`<div class="itemline"><div><div class="muted" style="font-size:12px">${fmtMD(w.date)}</div><div class="desc">${esc(w.text)}</div></div></div>`).join('')}` : ''}
+      </div>
+
+      <div class="card">
+        <div><div class="doodle"><svg viewBox="0 0 20 18" width="18" style="color:var(--pink)"><path d="M10 16S2 11 2 6.4C2 4 3.9 2 6.2 2c1.5 0 2.8.8 3.8 2 1-1.2 2.3-2 3.8-2C16.1 2 18 4 18 6.4 18 11 10 16 10 16z" fill="currentColor"/></svg>
+          <b style="font-family:var(--hand-zh);font-size:19px">感恩日记</b></div>
+          <div class="muted" style="font-size:12.5px;margin-top:2px">每天三件想感谢的小事,浇灌心里的花园</div></div>
+        <div class="wave"></div>
+        <div class="washi">${gratItems.length ? '今天已经种下 '+gratItems.filter(Boolean).length+' 颗感谢 🌸' : '今天,种下第一颗感谢吧 🌸'}</div>
+        ${[0,1,2].map(i=>`<div class="row" style="margin-top:10px;align-items:center">
+          <span class="chip" style="flex:0 0 auto">${i+1}</span>
+          <input class="small-in" id="grat-${i}" value="${esc(gratItems[i]||'')}" placeholder="${i===0?'今天想感谢的第一件小事…':i===1?'第二件小事,可只填一条哦…':'第三件小事,想到再写…'}">
+        </div>`).join('')}
+        <button class="primary" id="grat-save" style="margin-top:12px">收进日记本 ♡</button>
+        <div class="muted" style="margin-top:10px;font-size:12.5px">🌱 把每天的小感谢存起来,花园就会慢慢长大 ♡</div>
+      </div>
     </div>`;
+  const addWin = async () => {
+    const v = $('#win-in').value.trim(); if (!v) return;
+    await q(sb.from('wins').insert({ date: today, text: v }));
+    toast('记下了,你做到了 🏆'); route();
+  };
+  $('#win-add').onclick = addWin;
+  $('#win-in').addEventListener('keydown', e => { if (e.key==='Enter') addWin(); });
+  document.querySelectorAll('[data-wdel2]').forEach(b => b.onclick = async () => {
+    await q(sb.from('wins').delete().eq('id', b.dataset.wdel2)); route();
+  });
+  $('#grat-save').onclick = async () => {
+    const items = [0,1,2].map(i => $('#grat-'+i).value.trim()).filter(Boolean);
+    if (!items.length) return toast('先写一件小事吧');
+    await q(sb.from('gratitude').upsert({ date: today, items, updated_at: new Date().toISOString() }));
+    toast('收进日记本了 ♡'); route();
+  };
   document.querySelectorAll('[data-energy]').forEach(btn => btn.onclick = async () => {
     await q(sb.from('daily_state').upsert({ date: today, energy: btn.dataset.energy, actions: { ...acts, todo: null, todoEnergy: null }, updated_at: new Date().toISOString() }));
     toast('记下了,按这个步幅重新端菜'); route();
