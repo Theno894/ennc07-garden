@@ -754,6 +754,22 @@ async function recomputeProgress(id){
   await q(sb.from('projects').update({ progress: prog, status: prog>=100?'done':'growing', updated_at: new Date().toISOString() }).eq('id', id));
 }
 function closeModal(refresh){ const m = document.querySelector('.modal-mask'); if (m) m.remove(); if (refresh) route(); }
+/* 一条主线:按父子层级渲染任务,标出来源(✦AI / ✎你) */
+function renderTasks(all, parent, depth){
+  const kids = all.filter(t => (t.parent_id || null) === parent);
+  if (!kids.length) return '';
+  return kids.map(t => {
+    const isAI = t.source === 'ai';
+    const hasKids = all.some(x => x.parent_id === t.id);
+    return `<div class="check" style="padding-left:${depth*20}px">
+      <input type="checkbox" data-task="${t.id}" ${t.done?'checked':''}>
+      <span class="tt ${t.done?'done':''}">${esc(t.title)}
+        <span class="muted" style="font-size:11px;margin-left:4px" title="${isAI?'AI 拆解':'你添加'}">${isAI?'✦':'✎'}</span></span>
+      ${depth<2&&!hasKids ? `<button class="ghost" data-tsub="${t.id}" style="font-size:12px" title="再拆一层">⌄</button>` : ''}
+      <button class="ghost" data-tdel="${t.id}" style="font-size:12px">删</button></div>`
+      + renderTasks(all, t.id, depth+1);
+  }).join('');
+}
 async function openProject(id){
   const [p, ups, tasks] = await Promise.all([
     q(sb.from('projects').select('*').eq('id', id).maybeSingle()),
@@ -779,17 +795,14 @@ async function openProject(id){
     </div>
     <div id="ai-out" class="note hidden" style="margin-top:12px;white-space:pre-wrap"></div>
 
-    <h3 style="font-family:var(--serif);font-weight:600;margin:22px 0 4px">待办拆解</h3>
-    <div class="muted" style="font-size:12.5px;margin-bottom:6px">勾完子任务,进度会自动生长;也可以让上面的 AI 帮你拆。</div>
-    ${total ? (tasks||[]).map(t=>`<div class="check">
-        <input type="checkbox" data-task="${t.id}" ${t.done?'checked':''}>
-        <span class="tt ${t.done?'done':''}">${esc(t.title)}</span>
-        <button class="ghost" data-tdel="${t.id}">删</button></div>`).join('')
-      : '<div class="muted">还没有拆解。自己加一条,或让 Claude 帮你拆。</div>'}
+    <h3 style="font-family:var(--serif);font-weight:600;margin:22px 0 4px">接下来 · 主线</h3>
+    <div class="muted" style="font-size:12.5px;margin-bottom:6px">✦ 是 AI 拆的,✎ 是你加的;勾完自动记进「走过的路」,某条太大可以点 ⌄ 再拆一层。</div>
+    ${total ? renderTasks(tasks||[], null, 0)
+      : '<div class="muted">还没有拆解。自己加一条,或让上面的 AI 帮你拆。</div>'}
     <div class="row" style="margin-top:12px"><input class="small-in" id="new-task" placeholder="加一个子任务"><button class="primary" data-tadd>加</button></div>
 
-    <h3 style="font-family:var(--serif);font-weight:600;margin:24px 0 6px">脉络 · 已经做过的</h3>
-    ${visibleUps.length ? `<div class="timeline">${visibleUps.map(u=>`<div class="ev"><div class="spread"><div class="desc" style="flex:1">${esc(u.note)}</div><div class="row" style="gap:6px;flex:0 0 auto"><button class="ghost" data-nedit="${u.id}" style="font-size:12px">改</button><button class="ghost" data-ndel="${u.id}" style="font-size:12px;color:var(--danger)">×</button></div></div><div class="muted" style="font-size:12px">${fmtMD(u.created_at)}</div></div>`).join('')}</div>`
+    <h3 style="font-family:var(--serif);font-weight:600;margin:24px 0 6px">走过的路</h3>
+    ${visibleUps.length ? `<div class="timeline">${visibleUps.map(u=>`<div class="ev"><div class="spread"><div class="desc" style="flex:1">${esc(u.note)}</div><div class="row" style="gap:6px;flex:0 0 auto"><button class="ghost" data-n2t="${u.id}" style="font-size:12px" title="变成待办">→待办</button><button class="ghost" data-nedit="${u.id}" style="font-size:12px">改</button><button class="ghost" data-ndel="${u.id}" style="font-size:12px;color:var(--danger)">×</button></div></div><div class="muted" style="font-size:12px">${fmtMD(u.created_at)}</div></div>`).join('')}</div>`
       : '<div class="muted">还没有记录。每做一步,写一句留在这里。</div>'}
     <div class="row" style="margin-top:12px"><input class="small-in" id="new-note" placeholder="记录刚做的一步"><button data-nadd>记下</button></div>
 
@@ -803,8 +816,36 @@ async function openProject(id){
   mask.addEventListener('click', ev => { if (ev.target === mask) closeModal(true); });
   mask.querySelector('[data-mclose]').onclick = () => closeModal(true);
   mask.querySelectorAll('[data-task]').forEach(cb => cb.onchange = async () => {
+    const t = (tasks||[]).find(x => x.id === cb.dataset.task);
     await q(sb.from('project_tasks').update({ done: cb.checked }).eq('id', cb.dataset.task));
+    // 勾掉 → 自动在「走过的路」留痕;取消 → 撤掉那条
+    if (t){
+      const trace = '✓ ' + t.title;
+      if (cb.checked) await q(sb.from('project_updates').insert({ project_id: id, note: trace }), true);
+      else { const hit = (ups||[]).find(u => u.note === trace); if (hit) await q(sb.from('project_updates').delete().eq('id', hit.id), true); }
+    }
     await recomputeProgress(id); openProject(id);
+  });
+  mask.querySelectorAll('[data-tsub]').forEach(b => b.onclick = async () => {
+    const pid = b.dataset.tsub; const parent = (tasks||[]).find(x => x.id === pid);
+    b.textContent = '…'; b.disabled = true;
+    try {
+      const { data } = await sb.functions.invoke('garden-ai', { body:{ project_id:id, mode:'decompose', focus: parent?.title } });
+      const added = (data?.added || []).slice(0,4);
+      if (added.length){
+        // 函数已插入为顶层,这里把它们挂到父任务下
+        const { data: fresh } = await sb.from('project_tasks').select('*').eq('project_id', id).is('parent_id', null).in('title', added);
+        for (const r of (fresh||[])) await q(sb.from('project_tasks').update({ parent_id: pid, source:'ai' }).eq('id', r.id), true);
+        toast('又拆细了 ' + (fresh||[]).length + ' 步 ✦');
+      } else toast('这条已经够细了');
+    } catch(e){ toast('拆解失败:' + e.message.slice(0,30)); }
+    await recomputeProgress(id); openProject(id);
+  });
+  mask.querySelectorAll('[data-n2t]').forEach(b => b.onclick = async () => {
+    const u = (ups||[]).find(x => x.id === b.dataset.n2t); if (!u) return;
+    const v = prompt('变成待办(可改写):', u.note.replace(/^✓\s*/,'')); if (v === null || !v.trim()) return;
+    await q(sb.from('project_tasks').insert({ project_id: id, title: v.trim(), source:'manual' }));
+    await recomputeProgress(id); toast('已放进主线 ✎'); openProject(id);
   });
   mask.querySelectorAll('[data-tdel]').forEach(b => b.onclick = async () => {
     await q(sb.from('project_tasks').delete().eq('id', b.dataset.tdel));
@@ -813,7 +854,7 @@ async function openProject(id){
   const addTask = async () => {
     const v = mask.querySelector('#new-task').value.trim(); if (!v) return;
     clearDraft('ptask-'+id);
-    await q(sb.from('project_tasks').insert({ project_id: id, title: v }));
+    await q(sb.from('project_tasks').insert({ project_id: id, title: v, source:'manual' }));
     await recomputeProgress(id); openProject(id);
   };
   mask.querySelector('[data-tadd]').onclick = addTask;
