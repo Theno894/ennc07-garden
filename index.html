@@ -301,7 +301,7 @@ const STATUS_ZH = {seed:'待处理', growing:'正在生长', waiting:'等待中'
 const chip = st => `<span class="chip ${st}"><span class="dot"></span>${STATUS_ZH[st]||st}</span>`;
 
 /* ================= 导航与路由 ================= */
-const TABS = [ ['today','今日','今'], ['capture','捕捉','＋'], ['grow','生长','芽'], ['projects','项目','进'], ['lang','语言温室','语'], ['create','创作','作'], ['review','回顾','看'] ];
+const TABS = [ ['today','今日','今'], ['capture','随手记','＋'], ['grow','生长','芽'], ['projects','项目','进'], ['lang','语言','语'], ['create','创作','作'], ['review','回顾','看'] ];
 function renderNav(){
   const cur = location.hash.replace('#','') || 'today';
   $('#nav-desk').innerHTML = TABS.map(([id,name]) => `<a href="#${id}" class="${cur===id?'on':''}">${name}</a>`).join('');
@@ -386,6 +386,7 @@ function setPassword(){
 const VIEWS = {};
 const langUI = { libOpen:false, q:'', filter:'全部', sort:'recent' };  // 词库 UI 状态(跨渲染保留)
 let growView = 'list';  // 生长页:列表 or 星图
+let gratHistOpen = false;  // 感恩日记:过往是否展开
 async function route(){
   if (!session) return;
   renderNav();
@@ -406,10 +407,12 @@ VIEWS.today = async function(){
     q(sb.from('mail_briefs').select('*').order('date',{ascending:false}).limit(1)),
     q(sb.from('lang_items').select('*').eq('mastered', false)),
   ]);
-  const [winsAll, grat] = await Promise.all([
+  const [winsAll, gratAll] = await Promise.all([
     q(sb.from('wins').select('*').order('created_at',{ascending:false}), true),
-    q(sb.from('gratitude').select('*').eq('date', today).maybeSingle(), true),
+    q(sb.from('gratitude').select('*').order('date',{ascending:false}), true),
   ]);
+  const grat = (gratAll||[]).find(g => g.date === today);
+  const gratPast = (gratAll||[]).filter(g => g.date !== today).slice(0,14);
   const winsToday = (winsAll||[]).filter(w => w.date === today);
   const seedsToday = (seeds||[]).filter(e => (e.created_at||'').slice(0,10) === today);
   const winsBefore = (winsAll||[]).filter(w => w.date !== today).slice(0,5);
@@ -481,7 +484,7 @@ VIEWS.today = async function(){
         <svg viewBox="0 0 16 16" width="14" style="color:var(--yellow)"><circle cx="8" cy="8" r="3.4" fill="currentColor"/><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M12.8 3.2l-1.4 1.4M4.6 11.4l-1.4 1.4"/></g></svg></div>
         <div class="row" style="margin-top:12px">${eBtn('low','低能量','适合轻轻整理')}${eBtn('mid','中等能量','可以稳定推进')}${eBtn('high','高能量','适合深度处理')}</div>
       </div>
-      <div class="card"><div class="spread"><div class="muted">语言温室 · 今日</div><a href="#lang" class="muted">去打卡 →</a></div>
+      <div class="card"><div class="spread"><div class="muted">语言 · 今日</div><a href="#lang" class="muted">去看看 →</a></div>
         <div class="row" style="margin-top:14px">
           <a href="#lang"><span class="chip click ${en?'done':''}"><span class="dot"></span>英语 ${en?(en.items_added?`已收 ${en.items_added} 条`:'已浇过水'):'还没浇水'}</span></a>
           <a href="#lang"><span class="chip click ${ja?'done':''}"><span class="dot"></span>日语 ${ja?(ja.items_added?`已收 ${ja.items_added} 条`:'已浇过水'):'还没浇水'}</span></a>
@@ -532,11 +535,24 @@ VIEWS.today = async function(){
           <input class="small-in" id="grat-${i}" value="${esc(gratItems[i]||'')}" placeholder="${i===0?'今天想感谢的第一件小事…':i===1?'第二件小事,可只填一条哦…':'第三件小事,想到再写…'}">
         </div>`).join('')}
         <button class="primary" id="grat-save" style="margin-top:12px">收进日记本 ♡</button>
+        <div class="spread" style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px">
+          <span class="muted" style="font-size:13px">📖 翻翻看</span>
+          <button class="ghost" id="grat-hist" style="font-size:12.5px">${gratHistOpen?'收起 ▲':'过往的感谢 ▼'}</button>
+        </div>
+        <div id="grat-hist-wrap" class="${gratHistOpen?'':'hidden'}">
+          ${gratPast.length ? gratPast.map(g=>`<div class="itemline"><div><div class="muted" style="font-size:12px">${fmtMD(g.date)}</div>${(g.items||[]).map(t=>`<div class="desc">· ${esc(t)}</div>`).join('')}</div></div>`).join('')
+            : '<div class="muted" style="padding:8px 0;font-size:12.5px">还没有过往的感谢,今天是第一天 🌱</div>'}
+        </div>
         <div class="muted" style="margin-top:10px;font-size:12.5px">🌱 把每天的小感谢存起来,花园就会慢慢长大 ♡</div>
       </div>
     </div>`;
   keepDraft($('#win-in'), 'win');
   [0,1,2].forEach(i => keepDraft($('#grat-'+i), 'grat'+i));
+  $('#grat-hist') && ($('#grat-hist').onclick = () => {
+    gratHistOpen = !gratHistOpen;
+    $('#grat-hist-wrap').classList.toggle('hidden', !gratHistOpen);
+    $('#grat-hist').textContent = gratHistOpen ? '收起 ▲' : '过往的感谢 ▼';
+  });
   const addWin = async () => {
     const v = $('#win-in').value.trim(); if (!v) return;
     celebrate($('#win-add'), ['🏆','✦','✧','✦']);
@@ -600,9 +616,9 @@ VIEWS.capture = async function(){
   const recent = await q(sb.from('entries').select('*').order('created_at',{ascending:false}).limit(5)) || [];
   const KINDS = ['灵感','学习','项目','生活','英语','日语'];
   $('#view').innerHTML = `
-    <div class="eyebrow">统一捕捉</div>
+    <div class="eyebrow">随手记</div>
     <h1 class="hero">只需要说一次,花园会先保留原句</h1>
-    <p class="sub">选择只是第一层整理;英语/日语会直接落进语言温室。</p>
+    <p class="sub">选择只是第一层整理;英语/日语会直接落进语言那边。</p>
     <div class="cap-grid">
       <div class="card">
         <textarea id="cap-text" placeholder="写下一句话。它可以是想法、进展、身体感受,或刚学到的一句表达……"></textarea>
@@ -610,7 +626,7 @@ VIEWS.capture = async function(){
         <div class="spread"><span class="muted" id="cap-hint">写点什么,我猜猜它属于哪里</span><button class="primary" id="cap-save">种进花园</button></div>
       </div>
       <div class="card"><div class="muted">最近留下的原句</div>
-        ${recent.map(e=>`<div class="itemline"><div><div class="muted">${esc(e.kind)} · ${fmtMD(e.occurred_on)}</div><div class="desc">${esc((e.title||e.content).slice(0,42))}</div></div>${chip(e.status)}</div>`).join('') || '<p class="muted" style="margin-top:10px">还没有记录</p>'}
+        ${recent.map(e=>`<div class="itemline click" data-seed="${e.id}"><div><div class="muted">${esc(e.kind)} · ${fmtMD(e.occurred_on)}</div><div class="desc">${esc((e.title||e.content).slice(0,42))}</div></div>${chip(e.status)}</div>`).join('') || '<p class="muted" style="margin-top:10px">还没有记录</p>'}
       </div>
     </div>`;
   let kind = null;
@@ -626,6 +642,7 @@ VIEWS.capture = async function(){
   };
   const syncChips = () => chips.forEach(c => c.classList.toggle('sel', c.dataset.kind === kind));
   chips.forEach(c => c.onclick = () => { kind = c.dataset.kind; syncChips(); });
+  document.querySelectorAll('[data-seed]').forEach(el => el.onclick = () => openSeed(el.dataset.seed));
   keepDraft($('#cap-text'), 'capture');   // 没保存的字不会丢
   $('#cap-text').addEventListener('input', e => { if (!kind) { $('#cap-hint').textContent = '看起来像:' + guess(e.target.value); } });
   $('#cap-save').onclick = async () => {
@@ -1061,7 +1078,7 @@ VIEWS.lang = async function(){
   };
   const ins = (insights||[])[0];
   $('#view').innerHTML = `
-    <div class="eyebrow">语言温室</div>
+    <div class="eyebrow">语言</div>
     <h1 class="hero">已经连续生长 ${streak} 天</h1>
     <div class="row" style="gap:24px;margin:2px 0 24px">
       <span class="muted"><b style="color:var(--ink);font-size:19px">${totalN}</b> 个词</span>
@@ -1069,14 +1086,14 @@ VIEWS.lang = async function(){
       <span class="muted"><b style="color:var(--grow);font-size:19px">${due.length}</b> 待复习</span>
     </div>
     <div class="grid g2">${col('en')}${col('ja')}</div>
-    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">今天该浇水的(${due.length})</h2>
-      ${due.length ? '<button class="primary" id="focus-review">▶ 专注复习</button>' : ''}</div>
+    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">${due.length ? `今天有 ${due.length} 个词在静静想你` : '今天没有词在等你,温室很安静'}</h2>
+      ${due.length ? '<button class="primary" id="focus-review">▶ 一个个见它们</button>' : ''}</div>
     <div class="grid g2">
       ${due.map(i=>`<div class="card projcard" data-word="${i.id}">
         <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">浇过 ${i.review_count} 次</span></div>
         <h3>${esc(i.expression)}</h3>
         <div class="tool-hint muted">点开复习 →</div>
-      </div>`).join('') || '<div class="card"><div class="desc">今天没有需要浇水的表达，温室很安静。</div></div>'}
+      </div>`).join('') || '<div class="dashed" style="padding:20px;text-align:center"><div class="muted">词们都睡着了,明天再来看看 🌙</div></div>'}
     </div>
     ${mastered.length ? `<h2 class="sec">已长成 🌿 (${mastered.length})</h2>
       <div class="card"><div class="row">${mastered.slice(0,40).map(i=>`<span class="chip click" data-word="${i.id}">${esc(i.expression)}</span>`).join('')}</div></div>` : ''}
