@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="灵感花园">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500&family=Zhi+Mang+Xing&family=Long+Cang&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
@@ -109,6 +109,17 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
 .itemline:first-of-type{border-top:none}
 .cap-grid{display:grid;gap:14px;grid-template-columns:1.6fr 1fr}
 .card-done{opacity:.66}
+/* ——— 手账风:手写标题 + 马克笔高亮 + 虚线框 ——— */
+:root{ --hand:'Long Cang','Zhi Mang Xing',var(--serif); --marker:#f5d97a; }
+h1.hero{font-family:var(--hand);font-weight:400;letter-spacing:1px;line-height:1.4}
+h2.sec{font-family:var(--hand);font-weight:400;font-size:25px;letter-spacing:1px}
+.modal h2{font-family:var(--hand);font-weight:400;letter-spacing:1px}
+.eyebrow{font-family:var(--hand);font-size:15px;letter-spacing:2px}
+.mark{background:linear-gradient(180deg,transparent 55%,var(--marker) 55%,var(--marker) 92%,transparent 92%);padding:0 4px;border-radius:2px}
+.dashed{border:2px dashed var(--line);border-radius:14px;background:transparent}
+.card{border-radius:16px}
+.wave{height:8px;margin:6px 0 12px;background-repeat:repeat-x;background-size:22px 8px;
+  background-image:radial-gradient(circle at 5.5px 8px,transparent 5px,var(--line) 5px,var(--line) 6.2px,transparent 6.2px),radial-gradient(circle at 16.5px 0,transparent 5px,var(--line) 5px,var(--line) 6.2px,transparent 6.2px)}
 .chip{white-space:nowrap}
 .itemline{gap:10px}
 .itemline>div{min-width:0}
@@ -340,10 +351,11 @@ VIEWS.today = async function(){
   const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" style="flex:1;text-align:left"><b>${label}</b><br><span class="muted" style="font-size:12px">${tip}</span></button>`;
   $('#view').innerHTML = `
     <div class="eyebrow">${esc(greeting())}</div>
-    <h1 class="hero">今天的花园,只照料此刻需要的部分。</h1>
+    <h1 class="hero">今天的花园,只照料<span class="mark">此刻需要的部分</span>。</h1>
+    <div class="wave"></div>
     <p class="sub">不需要照顾整座花园,让一件事继续生长就好。</p>
     <div class="grid g2">
-      <div class="card"><div class="muted">今日能量</div>
+      <div class="card"><div class="muted">今日能量 🌼</div>
         <div class="row" style="margin-top:12px">${eBtn('low','低能量','适合轻轻整理')}${eBtn('mid','中等能量','可以稳定推进')}${eBtn('high','高能量','适合深度处理')}</div>
       </div>
       <div class="card"><div class="spread"><div class="muted">语言温室 · 今日</div><a href="#lang" class="muted">去打卡 →</a></div>
@@ -356,7 +368,7 @@ VIEWS.today = async function(){
     <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">此刻值得照料的</h2>
       ${energy ? `<span class="muted">按 ${energyLabel} · 已完成 ${doneCount}/${todo.length}</span>` : ''}</div>
     <div class="grid g3">
-      ${!energy ? '<div class="card"><div class="desc">先在上面选一个「今日能量」,我就端上刚刚好的量 🌱</div></div>'
+      ${!energy ? '<div class="dashed" style="padding:22px;text-align:center"><div class="desc">先在上面选一个「今日能量」<br><span class="muted" style="font-size:13px">我就端上刚刚好的量 🌱</span></div></div>'
         : (todo.map((x,i)=>{ const done = isDone(x); const isL = x.go==='lang'; const sub = isL ? (langCleared ? '今天的词都复习完了 🌿' : `还有 ${dueLang.length} 个到期,点开继续`) : (x.sub||''); return `<div class="card projcard ${done?'card-done':''}" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${done?'<span class="chip done"><span class="dot"></span>已完成</span>':chip(x.st)}</div>
         <h3 style="${done?'text-decoration:line-through;color:var(--mute)':''}">${esc(x.title)}</h3><div class="desc">${esc(sub)}</div>
         <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">${done?'↩ 撤销':'✓ 完成'}</button><button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button></div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':'去复习 →'}</span></div></div>`; }).join('')
