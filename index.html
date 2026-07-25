@@ -118,7 +118,7 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
 h1.hero{font-family:var(--hand-zh);font-weight:500;line-height:1.32;transform:rotate(-1deg);transform-origin:left center}
 h2.sec{font-family:var(--hand-zh);font-weight:500;font-size:24px}
 .modal h2{font-family:var(--hand-zh);font-weight:500}
-.eyebrow{font-family:var(--hand-zh);font-size:14px;letter-spacing:1px}
+.eyebrow{font-family:var(--hand-zh);font-size:20px;letter-spacing:1px;color:var(--ink2)}
 .card h3{font-family:var(--hand-zh);font-weight:500}
 .bignum,.exp,#date-label{font-family:var(--hand-mix)}
 /* washi 胶带条:暖黄 + 微旋转 + 撕边 */
@@ -354,6 +354,7 @@ VIEWS.today = async function(){
     q(sb.from('gratitude').select('*').eq('date', today).maybeSingle(), true),
   ]);
   const winsToday = (winsAll||[]).filter(w => w.date === today);
+  const seedsToday = (seeds||[]).filter(e => (e.created_at||'').slice(0,10) === today);
   const winsBefore = (winsAll||[]).filter(w => w.date !== today).slice(0,5);
   const gratItems = grat?.items || [];
   const en = (checkins||[]).find(c=>c.lang==='en'), ja = (checkins||[]).find(c=>c.lang==='ja');
@@ -400,7 +401,7 @@ VIEWS.today = async function(){
           <svg viewBox="0 0 16 15" width="14" style="color:var(--pink)"><path d="M8 13.5S1.5 9.6 1.5 5.4C1.5 3.2 3.2 1.5 5.2 1.5c1.2 0 2.2.6 2.8 1.5.6-.9 1.6-1.5 2.8-1.5 2 0 3.7 1.7 3.7 3.9C14.5 9.6 8 13.5 8 13.5z" fill="currentColor"/></svg>
         </div>
         <div class="eyebrow">${esc(greeting())}</div>
-        <h1 class="hero">今天的花园,只照料<span class="kw">此刻需要的部分</span>。</h1>
+        <h1 class="hero">今天的花园,只照料此刻需要的部分。</h1>
         <div class="washi">新的一天,从浇一点水开始</div>
       </div>
       <div class="bean" style="flex:0 0 auto">
@@ -425,8 +426,8 @@ VIEWS.today = async function(){
       </div>
       <div class="card"><div class="spread"><div class="muted">语言温室 · 今日</div><a href="#lang" class="muted">去打卡 →</a></div>
         <div class="row" style="margin-top:14px">
-          <a href="#lang"><span class="chip click ${en?'done':''}"><span class="dot"></span>英语 ${en?`已收 ${en.items_added} 条`:'还没浇水'}</span></a>
-          <a href="#lang"><span class="chip click ${ja?'done':''}"><span class="dot"></span>日语 ${ja?`已收 ${ja.items_added} 条`:'还没浇水'}</span></a>
+          <a href="#lang"><span class="chip click ${en?'done':''}"><span class="dot"></span>英语 ${en?(en.items_added?`已收 ${en.items_added} 条`:'已浇过水'):'还没浇水'}</span></a>
+          <a href="#lang"><span class="chip click ${ja?'done':''}"><span class="dot"></span>日语 ${ja?(ja.items_added?`已收 ${ja.items_added} 条`:'已浇过水'):'还没浇水'}</span></a>
         </div>
       </div>
     </div>
@@ -439,6 +440,7 @@ VIEWS.today = async function(){
         <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">${done?'↩ 撤销':'✓ 完成'}</button><button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button></div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':'去复习 →'}</span></div></div>`; }).join('')
         || '<div class="card"><div class="desc">今天没有待办。去「捕捉」写下第一句,或点「生长」逛逛你的灵感。</div></div>')}
     </div>
+    <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 记了 ${winsToday.length} 个做到了`:''}${(en||ja)?` · 浇过语言的水`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
     <h2 class="sec">邮件早报</h2>
     <div class="${b?'card':'note'}">
       ${b ? `<div class="spread"><b>${esc(b.date)} · 重要邮件 ${b.important_count} 封</b></div>
@@ -589,14 +591,16 @@ VIEWS.capture = async function(){
 async function bumpCheckin(lang, n){
   const today = todayStr();
   const cur = await q(sb.from('lang_checkins').select('*').eq('date',today).eq('lang',lang).maybeSingle(), true);
-  await q(sb.from('lang_checkins').upsert({ date: today, lang, items_added: (cur?.items_added||0) + n }));
+  await q(sb.from('lang_checkins').upsert({ date: today, lang, items_added: (cur?.items_added||0) + (n||0) }), true);
 }
 /* ================= 生长 ================= */
 const NEXT_STATUS = { seed:['growing','released'], growing:['settled','done','waiting','released'], waiting:['growing','released'], settled:[], done:[], released:['seed'] };
 VIEWS.grow = async function(filter){
   const all = await q(sb.from('entries').select('*').order('updated_at',{ascending:false})) || [];
   const f = typeof filter === 'string' ? filter : '全部';
-  const list = f === '全部' ? all : all.filter(e => e.kind === f);
+  let list = f === '全部' ? all : all.filter(e => e.kind === f);
+  const rank = e => e.status==='released' ? 2 : (e.status==='done'||e.status==='settled' ? 1 : 0);  // 已放下的排最后
+  list = [...list].sort((a,b) => rank(a) - rank(b));
   const star = growView === 'star';
   $('#view').innerHTML = `
     <div class="eyebrow">正在生长</div>
@@ -1153,6 +1157,7 @@ async function openWord(id){
 
 /* 专注复习:一次一张卡 */
 async function srsMark(i, kind){
+  await bumpCheckin(i.lang, 0);   // 复习也算今天浇过水
   if (kind === 'remembered') return q(sb.from('lang_items').update({ review_count: (i.review_count||0)+1, last_reviewed_at: new Date().toISOString() }).eq('id', i.id));
   if (kind === 'forgot')     return q(sb.from('lang_items').update({ review_count: 0, last_reviewed_at: new Date().toISOString() }).eq('id', i.id));
   if (kind === 'mastered')   return q(sb.from('lang_items').update({ mastered: true }).eq('id', i.id));
@@ -1245,9 +1250,12 @@ VIEWS.review = async function(){
     q(sb.from('projects').select('*')),
     q(sb.from('ai_insights').select('*').eq('scope','weekly_review').order('date',{ascending:false}).limit(1)),
   ]);
-  const all = [...(entries||[]).map(e=>({st:e.status})), ...(projs||[]).map(p=>({st:p.status}))];
-  const cnt = st => all.filter(x=>x.st===st).length;
-  const CARDS = [ ['seed','值得关注,但还没有开始'], ['growing','已经开始,也有下一步'], ['waiting','暂时交给外部条件'], ['done','这次行动已经结束'], ['settled','已经形成可复用的成果'], ['released','经过判断后安心不再继续'] ];
+  // 想法不参与"待处理"的压力计数:行动(项目)才算待办,想法只看留下了多少
+  const cnt = st => (projs||[]).filter(p=>p.status===st).length;
+  const CARDS = [ ['growing','正在被照料的行动'], ['waiting','暂时交给外部条件'], ['done','这次行动已经结束'], ['released','经过判断后安心不再继续'] ];
+  const ideaTotal = (entries||[]).length;
+  const ideaGrowing = (entries||[]).filter(e=>e.status==='growing').length;
+  const ideaSettled = (entries||[]).filter(e=>e.status==='settled'||e.status==='done').length;
   const weekAgo = new Date(Date.now() - 6*86400000);
   const thisWeek = (entries||[]).filter(e => new Date(e.occurred_on) >= weekAgo)
     .sort((a,b)=>b.occurred_on.localeCompare(a.occurred_on));
@@ -1256,11 +1264,18 @@ VIEWS.review = async function(){
   $('#view').innerHTML = `
     <div class="eyebrow">这一周的生长</div>
     <h1 class="hero">慢慢看见自己靠近了什么</h1>
-    <p class="sub">${total} 条记录留在花园里,${cnt('done')+cnt('settled')} 项已经完成或沉淀。</p>
+    <p class="sub">${ideaTotal} 个想法留在花园里,${cnt('done')} 项行动已经走完。想法不必被催,它们只是在那儿等季节。</p>
     <div class="spread" style="margin-bottom:14px"><span></span><button id="btn-export">导出花园数据</button></div>
+    <h2 class="sec">行动</h2>
     <div class="grid g3">
       ${CARDS.map(([st,tip])=>`<div class="card">${chip(st)}<div class="bignum">${cnt(st)}</div><div class="muted">${tip}</div></div>`).join('')}
     </div>
+    <h2 class="sec">想法</h2>
+    <div class="card"><div class="row" style="gap:26px">
+      <span class="muted"><b style="color:var(--ink);font-size:20px;font-family:var(--hand-mix)">${ideaTotal}</b> 个想法留下了</span>
+      <span class="muted"><b style="color:var(--grow);font-size:20px;font-family:var(--hand-mix)">${ideaGrowing}</b> 正在生长</span>
+      <span class="muted"><b style="color:var(--done);font-size:20px;font-family:var(--hand-mix)">${ideaSettled}</b> 已沉淀成东西</span>
+    </div><div class="muted" style="margin-top:8px;font-size:12.5px">🌱 想法不算待办,它们只是种在那里,等你想起。</div></div>
     <h2 class="sec">本周留下的</h2>
     <div class="card">
       ${thisWeek.map(e=>`<div class="itemline"><div><div class="muted">${fmtMD(e.occurred_on)} · ${esc(e.kind)}</div><div class="desc">${esc(e.title||e.content.slice(0,42))}</div></div>${chip(e.status)}</div>`).join('') || '<div class="desc muted">这一周还没有留下记录。</div>'}
