@@ -450,7 +450,10 @@ VIEWS.today = async function(){
     acts = { ...acts, todo, todoEnergy: energy };
     await q(sb.from('daily_state').upsert({ date: today, energy, actions: acts, updated_at: new Date().toISOString() }), true);
   }
-  if (!energy) todo = [];
+  if (!energy) todo = [];   // 没选能量就先不端自动推荐,但手动加的仍然显示
+  // 手动添加的临时事项(当天有效),排在最前
+  const manual = (acts.manual || []).map(m => ({ t:'临时', title:m.title, sub:'今天冒出来的事', st:'growing', go:'', gid:'', sid:m.sid, manual:true }));
+  todo = [...manual, ...todo.filter(x => !x.manual)];
   const langCleared = dueLang.length === 0;   // 到期词都复习完了
   const isDone = x => doneToday.includes(x.sid) || (x.go === 'lang' && langCleared);
   const doneCount = todo.filter(isDone).length;
@@ -494,13 +497,14 @@ VIEWS.today = async function(){
         </div>
       </div>
     </div>
-    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">此刻值得照料的</h2>
+    <div class="spread" style="margin:34px 0 8px"><h2 class="sec" style="margin:0">此刻值得照料的</h2>
       ${energy ? `<span class="muted">按 ${energyLabel} · 已完成 ${doneCount}/${todo.length}</span>` : ''}</div>
+    <div class="row" style="margin-bottom:14px"><input class="small-in" id="todo-in" placeholder="今天还冒出来什么事?加一件…"><button id="todo-add">＋ 加进今天</button></div>
     <div class="grid g3">
-      ${!energy ? '<div class="dashed" style="padding:22px;text-align:center"><div class="desc">先在上面选一个「今日能量」<br><span class="muted" style="font-size:13px">我就端上刚刚好的量 🌱</span></div></div>'
+      ${(!energy && !todo.length) ? '<div class="dashed" style="padding:22px;text-align:center"><div class="desc">先在上面选一个「今日能量」<br><span class="muted" style="font-size:13px">我就端上刚刚好的量 🌱</span></div></div>'
         : (todo.map((x,i)=>{ const done = isDone(x); const isL = x.go==='lang'; const sub = isL ? (langCleared ? '今天的词都复习完了 🌿' : `还有 ${dueLang.length} 个到期,点开继续`) : (x.sub||''); return `<div class="card projcard ${done?'card-done':''}" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${done?'<span class="chip done"><span class="dot"></span>已完成</span>':chip(x.st)}</div>
         <h3 style="${done?'text-decoration:line-through;color:var(--mute)':''}">${esc(x.title)}</h3><div class="desc">${esc(sub)}</div>
-        <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">${done?'↩ 撤销':'✓ 完成'}</button><button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button></div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':'去复习 →'}</span></div></div>`; }).join('')
+        <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">${done?'↩ 撤销':'✓ 完成'}</button>${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="padding:2px 0;font-size:12px;color:var(--danger)">删掉</button>`:`<button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button>`}</div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':x.go==='lang'?'去复习 →':''}</span></div></div>`; }).join('')
         || '<div class="card"><div class="desc">今天没有待办。去「捕捉」写下第一句,或点「生长」逛逛你的灵感。</div></div>')}
     </div>
     <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 记了 ${winsToday.length} 个做到了`:''}${(en||ja)?` · 浇过语言的水`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
@@ -602,6 +606,20 @@ VIEWS.today = async function(){
     if (!was){ celebrate(b, ['✦','✧','🌿','✦']); bounce(document.querySelector('.bean'), 'cheer'); }
     await q(sb.from('daily_state').upsert({ date: today, energy, actions: { ...acts, done: dn }, updated_at: new Date().toISOString() }));
     if (!was) toast('照料好了 ✓'); route();
+  });
+  const addTodo = async () => {
+    const v = $('#todo-in').value.trim(); if (!v) return toast('先写一件事');
+    const item = { sid: 'm-' + Date.now(), title: v };
+    await q(sb.from('daily_state').upsert({ date: today, energy: energy||'mid', actions: { ...acts, manual: [ ...(acts.manual||[]), item ] }, updated_at: new Date().toISOString() }));
+    clearDraft('todo'); toast('加进今天了 ✎'); route();
+  };
+  $('#todo-add') && ($('#todo-add').onclick = addTodo);
+  $('#todo-in') && (keepDraft($('#todo-in'), 'todo'), $('#todo-in').addEventListener('keydown', e => { if (e.key==='Enter') addTodo(); }));
+  document.querySelectorAll('[data-mdel]').forEach(b => b.onclick = async (ev) => {
+    ev.stopPropagation();
+    const sid = b.dataset.mdel;
+    await q(sb.from('daily_state').upsert({ date: today, energy: energy||'mid', actions: { ...acts, manual: (acts.manual||[]).filter(m=>m.sid!==sid), done: (acts.done||[]).filter(x=>x!==sid) }, updated_at: new Date().toISOString() }));
+    toast('删掉了'); route();
   });
   document.querySelectorAll('[data-dismiss]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation();
