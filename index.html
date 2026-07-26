@@ -406,7 +406,7 @@ VIEWS.today = async function(){
     q(sb.from('entries').select('*').in('status',['seed','growing']).order('updated_at',{ascending:false})),
     q(sb.from('lang_checkins').select('*').eq('date', today)),
     q(sb.from('mail_briefs').select('*').order('date',{ascending:false}).limit(1)),
-    q(sb.from('news_briefs').select('*').order('date',{ascending:false}).limit(1), true),
+    q(sb.from('news_briefs').select('*').order('date',{ascending:false}).limit(6), true),
     q(sb.from('lang_items').select('*').eq('mastered', false)),
   ]);
   const [winsAll, gratAll] = await Promise.all([
@@ -517,16 +517,21 @@ VIEWS.today = async function(){
           : `早报还没送到过。Claude 每天早上 8 点会扫一遍邮箱,把值得看的放在这里。`}
     </div>
 
-    ${(()=>{ const n=(news||[])[0]; if(!n) return `<h2 class="sec">今日播报</h2><div class="note">播报还没送到。每天 9:15 我会去你的 Obsidian 把新闻搬过来。</div>`;
-      const its=n.items||[], ops=n.opportunities||[];
-      return `<h2 class="sec">今日播报</h2>
-      <div class="card">
-        <div class="spread"><span class="muted">${esc(n.date)}</span>${n.term?`<span class="chip">📖 ${esc(n.term)}</span>`:''}</div>
-        ${n.headline?`<div class="washi" style="margin-top:10px">${esc(n.headline.slice(0,70))}</div>`:''}
-        <div class="wave"></div>
-        ${its.slice(0,5).map((i,k)=>`<div class="itemline"><div><div class="exp">${k+1}. ${esc(i.title)}</div>${i.summary?`<div class="muted" style="font-size:13px">${esc(i.summary)}</div>`:''}</div></div>`).join('')}
-        ${ops.length?`<div class="muted" style="margin-top:12px;font-size:12.5px">💡 机会雷达</div>${ops.slice(0,3).map(o=>`<div class="desc" style="font-size:13px;margin-top:4px">· ${esc(o)}</div>`).join('')}`:''}
-      </div>`; })()}
+    ${(()=>{ const all=news||[];
+      const pick = k => all.filter(x => (x.kind||'news')===k).sort((a,b)=>b.date.localeCompare(a.date))[0];
+      const n = pick('news'), x = pick('x_radar');
+      if (!n && !x) return `<h2 class="sec">今日播报</h2><div class="note">播报还没送到。新闻与 X 雷达会在每天早上自动搬进来。</div>`;
+      const block = (b, icon, label) => { if(!b) return '';
+        const its=b.items||[], ops=b.opportunities||[];
+        return `<div class="card" style="margin-bottom:12px">
+          <div class="spread"><span class="muted">${icon} ${label} · ${esc(b.date)}</span>
+            <div class="row" style="gap:8px">${b.term?`<span class="chip">📖 ${esc(b.term)}</span>`:''}${b.full_md?`<button class="ghost" data-full="${b.kind||'news'}|${b.date}" style="font-size:12px">看全文 →</button>`:''}</div></div>
+          ${b.headline?`<div class="washi" style="margin-top:10px">${esc(b.headline.slice(0,70))}</div>`:''}
+          <div class="wave"></div>
+          ${its.slice(0,6).map((i,k)=>`<div class="itemline ${b.full_md?'click':''}" ${b.full_md?`data-full="${b.kind||'news'}|${b.date}"`:''}><div><div class="exp">${k+1}. ${esc(i.title)}</div>${i.summary?`<div class="muted" style="font-size:13px">${esc(i.summary)}</div>`:''}</div>${b.full_md?'<span class="muted">›</span>':''}</div>`).join('')}
+          ${ops.length?`<div class="muted" style="margin-top:12px;font-size:12.5px">💡 机会雷达</div>${ops.slice(0,3).map(o=>`<div class="desc" style="font-size:13px;margin-top:4px">· ${esc(o)}</div>`).join('')}`:''}
+        </div>`; };
+      return `<h2 class="sec">今日播报</h2>${block(n,'📰','新闻')}${block(x,'🛰','X 雷达')}`; })()}
 
     <h2 class="sec">照料自己</h2>
     <div class="grid g2">
@@ -608,6 +613,23 @@ VIEWS.today = async function(){
     if (!was){ celebrate(b, ['✦','✧','🌿','✦']); bounce(document.querySelector('.bean'), 'cheer'); }
     await q(sb.from('daily_state').upsert({ date: today, energy, actions: { ...acts, done: dn }, updated_at: new Date().toISOString() }));
     if (!was) toast('照料好了 ✓'); route();
+  });
+  document.querySelectorAll('[data-full]').forEach(el => el.onclick = (ev) => {
+    ev.stopPropagation();
+    const [k,d] = el.dataset.full.split('|');
+    const b = (news||[]).find(n => (n.kind||'news')===k && n.date===d);
+    if (!b || !b.full_md) return;
+    closeModal(false);
+    document.body.insertAdjacentHTML('beforeend', `
+     <div class="modal-mask"><div class="modal" style="max-width:680px">
+      <div class="spread"><span class="chip">${k==='x_radar'?'🛰 X 雷达':'📰 新闻'} · ${esc(b.date)}</span><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
+      ${b.headline?`<div class="washi" style="margin-top:10px">${esc(b.headline.slice(0,70))}</div>`:''}
+      <div class="wave"></div>
+      <div class="desc" style="white-space:pre-wrap;font-size:13.5px;line-height:1.75">${esc(b.full_md)}</div>
+     </div></div>`);
+    const m = document.querySelector('.modal-mask');
+    m.addEventListener('click', e2 => { if (e2.target===m) m.remove(); });
+    m.querySelector('[data-mclose]').onclick = () => m.remove();
   });
   const addTodo = async () => {
     const v = $('#todo-in').value.trim(); if (!v) return toast('先写一件事');
