@@ -452,7 +452,7 @@ VIEWS.today = async function(){
   }
   if (!energy) todo = [];   // 没选能量就先不端自动推荐,但手动加的仍然显示
   // 手动添加的临时事项(当天有效),排在最前
-  const manual = (acts.manual || []).map(m => ({ t:'临时', title:m.title, sub:'今天冒出来的事', st:'growing', go:'', gid:'', sid:m.sid, manual:true }));
+  const manual = (acts.manual || []).map(m => ({ t:'我加的', title:m.title, sub:'', st:'growing', go:'', gid:'', sid:m.sid, manual:true }));
   todo = [...manual, ...todo.filter(x => !x.manual)];
   const langCleared = dueLang.length === 0;   // 到期词都复习完了
   const isDone = x => doneToday.includes(x.sid) || (x.go === 'lang' && langCleared);
@@ -499,7 +499,9 @@ VIEWS.today = async function(){
     </div>
     <div class="spread" style="margin:34px 0 8px"><h2 class="sec" style="margin:0">此刻值得照料的</h2>
       ${energy ? `<span class="muted">按 ${energyLabel} · 已完成 ${doneCount}/${todo.length}</span>` : ''}</div>
-    <div class="row" style="margin-bottom:14px"><input class="small-in" id="todo-in" placeholder="今天还冒出来什么事?加一件…"><button id="todo-add">＋ 加进今天</button></div>
+    <div class="row" style="margin-bottom:6px"><input class="small-in" id="todo-in" placeholder="今天还有什么事?写下来…">
+      <button id="todo-add">＋ 待办</button><button id="todo-done">✓ 已做</button></div>
+    <div class="muted" style="margin-bottom:14px;font-size:12px">「＋ 待办」放进下面照料;「✓ 已做」直接记进今天我做到了 🏆</div>
     <div class="grid g3">
       ${(!energy && !todo.length) ? '<div class="dashed" style="padding:22px;text-align:center"><div class="desc">先在上面选一个「今日能量」<br><span class="muted" style="font-size:13px">我就端上刚刚好的量 🌱</span></div></div>'
         : (todo.map((x,i)=>{ const done = isDone(x); const isL = x.go==='lang'; const sub = isL ? (langCleared ? '今天的词都复习完了 🌿' : `还有 ${dueLang.length} 个到期,点开继续`) : (x.sub||''); return `<div class="card projcard ${done?'card-done':''}" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${done?'<span class="chip done"><span class="dot"></span>已完成</span>':chip(x.st)}</div>
@@ -581,7 +583,7 @@ VIEWS.today = async function(){
     clearDraft('win'); toast('记下了,你做到了 🏆'); route();
   };
   $('#win-add').onclick = addWin;
-  $('#win-in').addEventListener('keydown', e => { if (e.key==='Enter') addWin(); });
+  $('#win-in').addEventListener('keydown', e => { if (e.key==='Enter' && !e.isComposing) addWin(); });
   document.querySelectorAll('[data-wdel2]').forEach(b => b.onclick = async () => {
     await q(sb.from('wins').delete().eq('id', b.dataset.wdel2)); route();
   });
@@ -613,8 +615,15 @@ VIEWS.today = async function(){
     await q(sb.from('daily_state').upsert({ date: today, energy: energy||'mid', actions: { ...acts, manual: [ ...(acts.manual||[]), item ] }, updated_at: new Date().toISOString() }));
     clearDraft('todo'); toast('加进今天了 ✎'); route();
   };
+  const addTodoDone = async () => {
+    const v = $('#todo-in').value.trim(); if (!v) return toast('先写一件事');
+    celebrate($('#todo-done'), ['🏆','✦','✧','✦']);
+    await q(sb.from('wins').insert({ date: today, text: v }));
+    clearDraft('todo'); toast('记下了,你做到了 🏆'); route();
+  };
   $('#todo-add') && ($('#todo-add').onclick = addTodo);
-  $('#todo-in') && (keepDraft($('#todo-in'), 'todo'), $('#todo-in').addEventListener('keydown', e => { if (e.key==='Enter') addTodo(); }));
+  $('#todo-done') && ($('#todo-done').onclick = addTodoDone);
+  $('#todo-in') && keepDraft($('#todo-in'), 'todo');   // 不绑回车,避免输入法切换时误触发
   document.querySelectorAll('[data-mdel]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation();
     const sid = b.dataset.mdel;
@@ -1027,7 +1036,7 @@ async function openProject(id){
     await recomputeProgress(id); openProject(id);
   };
   mask.querySelector('[data-tadd]').onclick = addTask;
-  mask.querySelector('#new-task').addEventListener('keydown', e => { if (e.key==='Enter') addTask(); });
+  mask.querySelector('#new-task').addEventListener('keydown', e => { if (e.key==='Enter' && !e.isComposing) addTask(); });
   keepDraft(mask.querySelector('#new-note'), 'pnote-'+id);
   keepDraft(mask.querySelector('#new-task'), 'ptask-'+id);
   const addNote = async () => {
@@ -1038,7 +1047,7 @@ async function openProject(id){
     openProject(id);
   };
   mask.querySelector('[data-nadd]').onclick = addNote;
-  mask.querySelector('#new-note').addEventListener('keydown', e => { if (e.key==='Enter') addNote(); });
+  mask.querySelector('#new-note').addEventListener('keydown', e => { if (e.key==='Enter' && !e.isComposing) addNote(); });
   mask.querySelectorAll('[data-nedit]').forEach(b => b.onclick = async () => {
     const cur = (ups||[]).find(u => u.id === b.dataset.nedit);
     const v = prompt('修改这一步:', cur?.note || ''); if (v === null) return;
