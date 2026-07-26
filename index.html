@@ -355,6 +355,61 @@ function keepDraft(el, key){
   window.addEventListener('pagehide', save);
 }
 function clearDraft(key){ localStorage.removeItem('garden-draft:' + key); }
+
+/* ===== 待办:零散待办 与 项目内待办 共用一套逻辑 =====
+   project_id 为空 = 零散待办;due 为空 = 无期限,永远不会主动催你 */
+let todoView = 'loose';        // loose(零散) | all(含项目内)
+const addDays = n => new Date(Date.now() + n*86400000).toISOString().slice(0,10);
+const daysSince = ts => Math.max(0, Math.floor((Date.now() - new Date(ts).getTime())/86400000));
+function dueMeta(due){
+  if (!due) return { rank:9, label:'', tone:'none' };
+  const t = todayStr();
+  if (due <  t)  return { rank:0, label:`逾期 ${Math.round((new Date(t)-new Date(due))/86400000)} 天`, tone:'over'  };
+  if (due === t) return { rank:1, label:'今天',  tone:'today' };
+  if (due <= addDays(3)) return { rank:2, label:due.slice(5).replace('-','/'), tone:'soon'  };
+  return { rank:3, label:due.slice(5).replace('-','/'), tone:'later' };
+}
+const DUECSS = {
+  over : 'background:#f6ded4;border-color:#e3b6a2;color:#8a3d22',
+  today: 'background:var(--yellow);border-color:var(--yellow);color:var(--inkdeep)',
+  soon : 'background:#f5efdc;border-color:#e0d4ab;color:#77601f',
+  later:'', none:'',
+};
+const dueChip = due => { const m = dueMeta(due); return due
+  ? `<span class="chip" style="font-size:11px;margin-left:6px;padding:0 7px;${DUECSS[m.tone]}">${m.label}</span>` : ''; };
+/* 一件事被搁置多久了(点过「还需要」会重新计时) */
+const idleDays = t => daysSince(t.kept_at || t.created_at);
+/* 采集口通用:把任意一句话变成待办,due 可空 */
+async function addTodoRow(title, due, pid){
+  const t = (title||'').trim();
+  if (!t) { toast('先写一件事'); return false; }
+  await q(sb.from('project_tasks').insert({ title:t, due:due||null, project_id:pid||null, source:'manual' }));
+  toast(due ? `记下了,${dueMeta(due).label} 到期 ✎` : '记进待办了 ✎');
+  return true;
+}
+/* 邮件早报 / X 雷达 / 随手记 上的「＋待办」都走这里 */
+function bindTodoAdders(after){
+  document.querySelectorAll('[data-t2add]').forEach(b => b.onclick = async (ev) => {
+    ev.stopPropagation(); ev.preventDefault();
+    celebrate(b, ['✎','✦','✧']);
+    if (await addTodoRow(b.dataset.t2add, b.dataset.due || null) && after) after();
+  });
+}
+/* 从「截止7/30」「截止 7 月 30 日」里抠出日期,抠不到返回 null */
+function parseDue(s){
+  const m = String(s||'').match(/(\d{1,2})\s*[\/月\-.]\s*(\d{1,2})/);
+  if (!m) return null;
+  const y = new Date().getFullYear();
+  const d = `${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+  return /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(d) ? d : null;
+}
+/* 弹一个日期输入(留空 = 无期限) */
+function askDue(cur){
+  const v = prompt('截止日期(格式 7/30,留空 = 无期限):', cur ? cur.slice(5).replace('-','/') : '');
+  if (v === null) return undefined;          // 取消
+  if (!v.trim())  return null;               // 清空
+  return parseDue(v) || (toast('日期没看懂,先当无期限'), null);
+}
 function greeting(){
   const h = new Date().getHours();
   const g = h<5?'夜深了':h<11?'早安':h<13?'午安':h<18?'午后好':h<23?'晚上好':'夜深了';
@@ -468,7 +523,7 @@ async function route(){
 /* ================= 今日 ================= */
 VIEWS.today = async function(){
   const today = todayStr();
-  const [ds, projs, seeds, checkins, brief, news, langAll] = await Promise.all([
+  const [ds, projs, seeds, checkins, brief, news, langAll, taskAll] = await Promise.all([
     q(sb.from('daily_state').select('*').eq('date', today).maybeSingle(), true),
     q(sb.from('projects').select('*').eq('status','growing').order('updated_at',{ascending:false})),
     q(sb.from('entries').select('*').in('status',['seed','growing']).order('updated_at',{ascending:false})),
@@ -476,6 +531,7 @@ VIEWS.today = async function(){
     q(sb.from('mail_briefs').select('*').order('date',{ascending:false}).limit(1)),
     q(sb.from('news_briefs').select('*').order('date',{ascending:false}).limit(6), true),
     q(sb.from('lang_items').select('*').eq('mastered', false)),
+    q(sb.from('project_tasks').select('*'), true),
   ]);
   const [winsAll, gratAll] = await Promise.all([
     q(sb.from('wins').select('*').order('created_at',{ascending:false}), true),
@@ -504,8 +560,21 @@ VIEWS.today = async function(){
   // 语言是「一个复习任务」而不是固定某个词:队列会随复习动态变化,复习完自动完成
   const langTask = (dueLang.length && !snoozed.includes('lang-review')) ? [{ t:'语言', title:'语言复习', sub:'点开走一遍到期队列', st:'growing', go:'lang', gid:'', sid:'lang-review' }] : [];
   const interleave = arrs => { const out=[]; for(let i=0;out.length<50;i++){ let any=false; for(const a of arrs){ if(a[i]){ out.push(a[i]); any=true; } } if(!any) break; } return out; };
-  const energyNeed = {low:2, mid:3, high:5}[energy] || 3;
+  const energyNeed = {low:2, mid:4, high:6}[energy] || 4;
   const energyLabel = {low:'低能量',mid:'中等能量',high:'高能量'}[energy] || '';
+  // ——— 临期待办:每次都实时算(中途加的也会出现),不进 daily_state 缓存 ———
+  // 低能量只端「逾期 + 今天到期」;中能量加上三天内;高能量再加项目/种子/语言
+  const pjName = {}; (projs||[]).forEach(p => pjName[p.id] = p.name);
+  // 低:只端逾期+今天到期 · 中/高:加上三天内。三天以外的待办不上今日页,安静待在待办清单里
+  const maxRank = {low:1, mid:2, high:2}[energy] ?? 2;
+  const liveTasks = (taskAll||[]).filter(t => !t.dropped && t.due &&
+    (!t.done || (t.done_at||'').slice(0,10) === today));   // 今天做完的也留着,好落进「今天完成的」
+  const urgent = notSnoozed(liveTasks
+    .map(t => ({ ...dueMeta(t.due), row:t }))
+    .filter(x => x.rank <= maxRank)
+    .sort((a,b) => a.rank - b.rank || (a.row.due < b.row.due ? -1 : 1))
+    .map(x => ({ t:'待办', title:x.row.title, sub:[x.label, x.row.project_id ? pjName[x.row.project_id] : ''].filter(Boolean).join(' · '),
+                 st:'seed', go:'', gid:'', sid:'task-'+x.row.id, due:x.row.due })));
   const pickOne = arr => arr.length ? arr[Math.floor(Math.random()*arr.length)] : null;
   // 选了能量才端菜;每天第一次(或能量变化时)选一次,之后固定不变
   let todo = acts.todo;
@@ -518,12 +587,16 @@ VIEWS.today = async function(){
     acts = { ...acts, todo, todoEnergy: energy };
     await q(sb.from('daily_state').upsert({ date: today, energy, actions: acts, updated_at: new Date().toISOString() }), true);
   }
-  if (!energy) todo = [];   // 没选能量就先不端自动推荐,但手动加的仍然显示
+  if (!energy) todo = [];   // 没选能量就先不端自动推荐,但手动加的 / 临期待办仍然显示
   // 手动添加的临时事项(当天有效),排在最前
   const manual = (acts.manual || []).map(m => ({ t:'我加的', title:m.title, sub:'', st:'growing', go:'', gid:'', sid:m.sid, manual:true }));
-  todo = [...manual, ...todo.filter(x => !x.manual)];
+  // 顺序:我加的 → 临期待办 → 项目/种子/语言(剩多少位置端多少)
+  const soft = (todo||[]).filter(x => !x.manual && !String(x.sid||'').startsWith('task-'));
+  const room = Math.max(0, energyNeed - manual.length - urgent.length);
+  todo = [...manual, ...urgent, ...soft.slice(0, room)];
   const langCleared = dueLang.length === 0;   // 到期词都复习完了
-  const isDone = x => doneToday.includes(x.sid) || (x.go === 'lang' && langCleared);
+  const taskDone = new Set(liveTasks.filter(t=>t.done).map(t=>'task-'+t.id));
+  const isDone = x => doneToday.includes(x.sid) || taskDone.has(x.sid) || (x.go === 'lang' && langCleared);
   const doneCount = todo.filter(isDone).length;
   const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" style="flex:1;text-align:left"><b>${label}</b><br><span class="muted" style="font-size:12px">${tip}</span></button>`;
   $('#view').innerHTML = `
@@ -569,8 +642,7 @@ VIEWS.today = async function(){
       if(!x) return '';
       const its=x.items||[];
       const todayD=todayStr();
-      const parseDL = s => { const m=String(s||'').match(/(\d{1,2})[\/月-](\d{1,2})/); if(!m) return null;
-        const y=new Date().getFullYear(); const d=`${y}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`; return d; };
+      const parseDL = s => parseDue(s);
       return `<div class="card" style="margin-top:14px;padding:12px 16px">
         <div class="spread"><span class="muted" style="font-size:13px">🛰 AI 圈今日 · ${esc(x.date)}</span>
           ${x.full_md?`<button class="ghost" data-full="x_radar|${x.date}" style="font-size:12px">全部 →</button>`:''}</div>
@@ -578,22 +650,25 @@ VIEWS.today = async function(){
         ${its.slice(0,6).map((i,k)=>{ const s=(i.summary||'')+' '+(i.title||'');
           const dl=parseDL((s.match(/截止[^,，。;；]*/)||[])[0]);
           const expired = dl && dl < todayD;
-          const urgent = dl && !expired;
           const icon = /额度|重置|恢复/.test(s)?'♻️' : /活动|优惠|免费|领取|福利/.test(s)?'🎁' : /发布|上线|更新|推出|新版|新模型/.test(s)?'🆕' : '·';
           return `<div class="itemline" style="padding:6px 0;${expired?'opacity:.42':''}">
             <div style="flex:1"><span style="margin-right:6px">${icon}</span><span class="${expired?'':'exp'}" style="font-weight:${expired?'400':'500'}">${esc(i.title)}</span>
               ${i.summary?`<div class="muted" style="font-size:12.5px;margin-left:22px">${esc(i.summary.slice(0,60))}</div>`:''}</div>
             <div class="row" style="gap:6px;flex:0 0 auto">
-              ${urgent?`<span class="chip" style="background:var(--yellow);border-color:var(--yellow);color:var(--inkdeep);font-size:11px">限时</span>`:''}
-              ${expired?'<span class="muted" style="font-size:11px">已过期</span>':`<button class="ghost" data-x2t="${esc(i.title)}" style="font-size:11.5px">＋今天</button>`}
+              ${dl && !expired?`<span class="chip" style="background:var(--yellow);border-color:var(--yellow);color:var(--inkdeep);font-size:11px">限时</span>`:''}
+              ${expired?'<span class="muted" style="font-size:11px">已过期</span>'
+                : dl ? `<button class="ghost" data-t2add="${esc(i.title)}" data-due="${dl}" style="font-size:11.5px">＋待办</button>`
+                     : `<button class="ghost" data-x2t="${esc(i.title)}" style="font-size:11.5px">＋今天</button>`}
             </div></div>`; }).join('')}
         </div></div>`; })()}
 
     <div class="spread" style="margin:26px 0 8px"><h2 class="sec" style="margin:0">此刻值得照料的</h2>
       ${energy ? `<span class="muted">按 ${energyLabel} · 已完成 ${doneCount}/${todo.length}</span>` : ''}</div>
+    ${energy==='low' && !urgent.length ? `<div class="note" style="margin-bottom:12px"><div class="muted">今天没有非做不可的事 —— 休息也是照料 🌙</div></div>` : ''}
+    ${energy==='low' && urgent.length ? `<div class="muted" style="margin-bottom:10px;font-size:12.5px">低能量,只端逾期和今天到期的。其余的在<a href="#projects">待办</a>里等你</div>` : ''}
     <div class="row" style="margin-bottom:6px"><input class="small-in" id="todo-in" placeholder="今天还有什么事?写下来…">
       <button id="todo-add">＋ 待办</button><button id="todo-done">✓ 已做</button></div>
-    <div class="muted" style="margin-bottom:14px;font-size:12px">「＋ 待办」要做的 ·「✓ 已做」已经做完的,都会算进今天完成</div>
+    <div class="muted" style="margin-bottom:14px;font-size:12px">「＋ 待办」只管今天 ·「✓ 已做」已经做完的 · 要带截止日期的去<a href="#projects">待办</a>写</div>
     ${(()=>{ const undone = todo.filter(x=>!isDone(x)), fin = todo.filter(x=>isDone(x));
       const cards = (!energy && !todo.length)
         ? '<div class="dashed" style="padding:22px;text-align:center"><div class="desc">先在上面选一个「今日能量」<br><span class="muted" style="font-size:13px">我就端上刚刚好的量 🌱</span></div></div>'
@@ -611,9 +686,15 @@ VIEWS.today = async function(){
     <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 突破了 ${winsToday.length} 件`:''}${(en||ja)?` · 浇过语言的水`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
     <h2 class="sec">邮件早报</h2>
     <div class="${b?'card':'note'}">
-      ${b ? `<div class="spread"><b>${esc(b.date)} · 重要邮件 ${b.important_count} 封</b></div>
-             <div class="desc" style="margin-top:8px;white-space:pre-wrap">${esc(b.summary_md||'')}</div>`
-          : `早报还没送到过。Claude 每天早上 8 点会扫一遍邮箱,把值得看的放在这里。`}
+      ${b ? `<div class="spread"><b>${esc(b.date)} · 重要邮件 ${b.important_count} 封</b>
+               ${(b.items||[]).length?'<span class="muted" style="font-size:12px">点＋待办就不会忘</span>':''}</div>
+             ${(b.items||[]).length
+               ? (b.items||[]).map(it=>`<div class="itemline" style="padding:7px 0">
+                   <div style="flex:1"><div class="exp" style="font-weight:500">${esc(it.from||'')}${it.subject?' · '+esc(it.subject):''}</div>
+                     ${it.action?`<div class="muted" style="font-size:12.5px">${esc(it.action)}</div>`:''}</div>
+                   <button class="ghost" data-t2add="${esc(it.action||it.subject||it.from||'')}" style="font-size:11.5px;flex:0 0 auto">＋待办</button></div>`).join('')
+               : `<div class="desc" style="margin-top:8px;white-space:pre-wrap">${esc(b.summary_md||'')}</div>`}`
+          : `早报还没送到过。每天早上 9 点会扫一遍邮箱,把值得看的放在这里。`}
     </div>
 
     ${(()=>{ const n=(news||[]).filter(x=>(x.kind||'news')==='news').sort((a,b)=>b.date.localeCompare(a.date))[0];
@@ -704,9 +785,17 @@ VIEWS.today = async function(){
   document.querySelectorAll('[data-done]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation();
     const sid = b.dataset.done;
-    const was = (acts.done||[]).includes(sid);
+    const was = (acts.done||[]).includes(sid) || taskDone.has(sid);
     const dn = was ? (acts.done||[]).filter(x=>x!==sid) : [ ...(acts.done||[]), sid ];
     if (!was){ celebrate(b, ['✦','✧','🌿','✦']); bounce(document.querySelector('.bean'), 'cheer'); }
+    // 是真的待办就同步回 project_tasks(撤销也会一起撤)
+    if (sid.startsWith('task-')){
+      const tid = sid.slice(5);
+      await q(sb.from('project_tasks').update(was ? { done:false, done_at:null }
+                                                 : { done:true, done_at:new Date().toISOString(), started_at:null }).eq('id', tid), true);
+      const row = (taskAll||[]).find(t=>t.id===tid);
+      if (row?.project_id) await recomputeProgress(row.project_id);
+    }
     await q(sb.from('daily_state').upsert({ date: today, energy, actions: { ...acts, done: dn }, updated_at: new Date().toISOString() }));
     if (!was) toast('照料好了 ✓'); route();
   });
@@ -733,6 +822,7 @@ VIEWS.today = async function(){
     await q(sb.from('daily_state').upsert({ date: today, energy: energy||'mid', actions: { ...acts, manual: [ ...(acts.manual||[]), item ] }, updated_at: new Date().toISOString() }));
     toast('加进今天了 ✎'); route();
   });
+  bindTodoAdders(route);   // 邮件早报 / X 雷达上的「＋待办」→ 进待办清单(带截止日)
   const addTodo = async () => {
     const v = $('#todo-in').value.trim(); if (!v) return toast('先写一件事');
     const item = { sid: 'm-' + Date.now(), title: v };
@@ -805,7 +895,11 @@ VIEWS.capture = async function(){
         <div class="spread"><span class="muted" id="cap-hint">写点什么,我猜猜它属于哪里</span><button class="primary" id="cap-save">种进花园</button></div>
       </div>
       <div class="card"><div class="muted">最近留下的原句</div>
-        ${recent.map(e=>`<div class="itemline click" data-seed="${e.id}"><div><div class="muted">${esc(e.kind)} · ${fmtMD(e.occurred_on)}</div><div class="desc">${esc((e.title||e.content).slice(0,42))}</div></div>${chip(e.status)}</div>`).join('') || '<p class="muted" style="margin-top:10px">还没有记录</p>'}
+        ${recent.map(e=>`<div class="itemline click" data-seed="${e.id}">
+          <div style="flex:1"><div class="muted">${esc(e.kind)} · ${fmtMD(e.occurred_on)}</div><div class="desc">${esc((e.title||e.content).slice(0,42))}</div></div>
+          <div class="row" style="gap:8px;flex:0 0 auto">${chip(e.status)}
+            <button class="ghost" data-t2add="${esc((e.title||e.content).slice(0,60))}" style="font-size:11.5px" title="这其实是件要做的事">＋待办</button></div>
+        </div>`).join('') || '<p class="muted" style="margin-top:10px">还没有记录</p>'}
       </div>
     </div>`;
   let kind = null;
@@ -831,6 +925,7 @@ VIEWS.capture = async function(){
   });
   keepDraft($('#book-in'), 'book');
   document.querySelectorAll('[data-seed]').forEach(el => el.onclick = () => openSeed(el.dataset.seed));
+  bindTodoAdders();                       // 「＋待办」:这句其实是件要做的事
   keepDraft($('#cap-text'), 'capture');   // 没保存的字不会丢
   $('#cap-text').addEventListener('input', e => { if (!kind) { $('#cap-hint').textContent = '看起来像:' + guess(e.target.value); } });
   $('#cap-save').onclick = async () => {
@@ -989,16 +1084,85 @@ async function openSeed(id){
 VIEWS.projects = async function(){
   const [projs, tasks] = await Promise.all([
     q(sb.from('projects').select('*').order('updated_at',{ascending:false})),
-    q(sb.from('project_tasks').select('project_id,done'), true),
+    q(sb.from('project_tasks').select('*'), true),
   ]);
+  const all = tasks || [];
+  const pname = {}; (projs||[]).forEach(p => pname[p.id] = p.name);
   const stat = {};
-  (tasks||[]).forEach(t=>{ const s = stat[t.project_id] || (stat[t.project_id]={done:0,total:0}); s.total++; if(t.done) s.done++; });
+  all.forEach(t=>{ if(!t.project_id) return; const s = stat[t.project_id] || (stat[t.project_id]={done:0,total:0}); s.total++; if(t.done) s.done++; });
   const active = (projs||[]).filter(p=>p.status==='growing').length;
+
+  /* ---------- 待办清单 ---------- */
+  const pool    = all.filter(t => !t.done && !t.dropped && (todoView === 'all' || !t.project_id));
+  const withDue = pool.filter(t=>t.due).sort((a,b)=> a.due < b.due ? -1 : a.due > b.due ? 1 : 0);
+  const noDue   = pool.filter(t=>!t.due).sort((a,b)=> (a.created_at||'') < (b.created_at||'') ? -1 : 1);
+  const looseN  = all.filter(t => !t.done && !t.dropped && !t.project_id).length;
+  const allN    = all.filter(t => !t.done && !t.dropped).length;
+  const stale   = noDue.filter(t => idleDays(t) >= 30);
+  const fresh   = noDue.filter(t => idleDays(t) <  30);
+  const overdue = withDue.filter(t=>dueMeta(t.due).rank===0).length;
+
+  const row = t => `<div class="check" style="align-items:center">
+      <input type="checkbox" data-todo="${t.id}">
+      <span class="tt" style="flex:1">${esc(t.title)}${dueChip(t.due)}${
+        t.project_id ? `<span class="muted" style="font-size:11px;margin-left:6px">· ${esc(pname[t.project_id]||'项目')}</span>` : ''}</span>
+      <button class="ghost" data-todue="${t.id}" style="font-size:12px" title="改截止日">📅</button>
+      <button class="ghost" data-tododel="${t.id}" style="font-size:12px">删</button>
+    </div>`;
+
+  const GROUPS = [
+    ['逾期',   withDue.filter(t=>dueMeta(t.due).rank===0)],
+    ['今天',   withDue.filter(t=>dueMeta(t.due).rank===1)],
+    ['近三天', withDue.filter(t=>dueMeta(t.due).rank===2)],
+    ['以后',   withDue.filter(t=>dueMeta(t.due).rank===3)],
+  ].filter(g => g[1].length);
+
+  const todoBox = `
+    <div class="card" style="margin-bottom:22px">
+      <div class="spread">
+        <div class="doodle"><svg viewBox="0 0 20 20" width="17" style="color:var(--sage,#4a6b52)"><rect x="3" y="2.5" width="14" height="15" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.6 9.4l2 2 4.8-4.8" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <b style="font-family:var(--hand-zh);font-size:19px">待办</b></div>
+        <div class="row" style="gap:6px">
+          <span class="chip click ${todoView==='loose'?'sel':''}" data-tview="loose" style="font-size:11.5px">零散 ${looseN}</span>
+          <span class="chip click ${todoView==='all'  ?'sel':''}" data-tview="all"   style="font-size:11.5px">全部 ${allN}</span>
+        </div>
+      </div>
+      <div class="muted" style="font-size:12.5px;margin-top:2px">随时想起就扔进来。<b>不填日期就不会催你</b>${overdue?` · 有 ${overdue} 件逾期了`:''}</div>
+
+      <div class="row" style="margin:14px 0 4px">
+        <input class="small-in" id="td-in" placeholder="想起一件事…" style="flex:1">
+        <input class="small-in" id="td-due" type="date" style="flex:0 0 auto;max-width:150px">
+        <button id="td-add">＋ 加进来</button>
+      </div>
+
+      ${GROUPS.map(([name, list]) => `
+        <div style="margin-top:12px"><div class="washi" style="font-size:12px">${name}</div>
+        ${list.map(row).join('')}</div>`).join('')}
+
+      ${fresh.length ? `<div style="margin-top:12px"><div class="washi" style="font-size:12px">无期限 ${fresh.length}</div>
+        ${fresh.map(row).join('')}</div>` : ''}
+
+      ${!pool.length ? `<div class="dashed" style="padding:20px;text-align:center;margin-top:12px">
+        <div class="muted">${todoView==='all'?'所有事都做完了 🌿':'没有零散待办。想起什么就写上面那一行。'}</div></div>` : ''}
+
+      ${stale.length ? `<div class="note" style="margin-top:14px">
+        <div class="muted" style="font-size:12.5px">这 ${stale.length} 件事在这儿躺了一个月以上了,还需要吗?</div>
+        ${stale.slice(0,5).map(t=>`<div class="itemline" style="padding:6px 0">
+          <div class="desc" style="flex:1">${esc(t.title)}<span class="muted" style="font-size:11px;margin-left:6px">躺了 ${idleDays(t)} 天</span></div>
+          <div class="row" style="gap:8px;flex:0 0 auto">
+            <button class="ghost" data-tokeep="${t.id}" style="font-size:11.5px">还需要</button>
+            <button class="ghost" data-todrop="${t.id}" style="font-size:11.5px;color:var(--mute)">放下</button>
+          </div></div>`).join('')}
+      </div>` : ''}
+    </div>`;
+
   $('#view').innerHTML = `
     <div class="eyebrow">项目与工作</div>
     <h1 class="hero">把下一步放在看得见的地方</h1>
     <p class="sub">${active} 项正在被照料,${(projs||[]).length - active} 项已经收好;点开任意项目,看它的脉络与拆解。</p>
-    <div style="margin-bottom:16px"><button class="primary" id="p-add">＋ 种一个新项目</button></div>
+    ${todoBox}
+    <div class="spread" style="margin-bottom:12px"><h2 class="sec" style="margin:0">项目</h2>
+      <button class="primary" id="p-add">＋ 种一个新项目</button></div>
     <div class="grid g3">
       ${(projs||[]).map(p=>{
         const s = stat[p.id];
@@ -1013,6 +1177,41 @@ VIEWS.projects = async function(){
         </div>`;
       }).join('') || '<div class="card"><div class="desc">还没有项目。</div></div>'}
     </div>`;
+
+  /* ---------- 待办交互 ---------- */
+  document.querySelectorAll('[data-tview]').forEach(c => c.onclick = () => { todoView = c.dataset.tview; VIEWS.projects(); });
+  const addTd = async () => {
+    const el = $('#td-in'); if (!await addTodoRow(el.value, $('#td-due').value || null)) return;
+    el.value = ''; $('#td-due').value = ''; clearDraft('td'); VIEWS.projects();
+  };
+  $('#td-add') && ($('#td-add').onclick = addTd);
+  $('#td-in')  && keepDraft($('#td-in'), 'td');
+  $('#td-in')  && $('#td-in').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) addTd(); });
+  document.querySelectorAll('[data-todo]').forEach(cb => cb.onchange = async () => {
+    celebrate(cb, ['✓','✦','✧']);
+    await q(sb.from('project_tasks').update({ done:true, done_at:new Date().toISOString(), started_at:null }).eq('id', cb.dataset.todo));
+    const t = all.find(x=>x.id===cb.dataset.todo);
+    if (t?.project_id) await recomputeProgress(t.project_id);
+    toast('做完了 ✓'); VIEWS.projects();
+  });
+  document.querySelectorAll('[data-todue]').forEach(b => b.onclick = async () => {
+    const t = all.find(x=>x.id===b.dataset.todue);
+    const d = askDue(t?.due); if (d === undefined) return;
+    await q(sb.from('project_tasks').update({ due: d }).eq('id', b.dataset.todue));
+    toast(d ? `改成 ${dueMeta(d).label} 到期` : '改成无期限了'); VIEWS.projects();
+  });
+  document.querySelectorAll('[data-tododel]').forEach(b => b.onclick = async () => {
+    await q(sb.from('project_tasks').delete().eq('id', b.dataset.tododel)); toast('删掉了'); VIEWS.projects();
+  });
+  document.querySelectorAll('[data-tokeep]').forEach(b => b.onclick = async () => {
+    await q(sb.from('project_tasks').update({ kept_at:new Date().toISOString() }).eq('id', b.dataset.tokeep));
+    toast('好,那就留着 🌱'); VIEWS.projects();
+  });
+  document.querySelectorAll('[data-todrop]').forEach(b => b.onclick = async () => {
+    await q(sb.from('project_tasks').update({ dropped:true, dropped_at:new Date().toISOString() }).eq('id', b.dataset.todrop));
+    toast('放下了。放下也是一种完成 🍂'); VIEWS.projects();
+  });
+
   $('#p-add').onclick = async () => {
     const name = prompt('项目名字:'); if (!name) return;
     const desc = prompt('一句话描述(可空):') || '';
@@ -1030,7 +1229,6 @@ async function recomputeProgress(id){
 }
 function closeModal(refresh){ const m = document.querySelector('.modal-mask'); if (m) m.remove(); if (refresh) route(); }
 /* 一条主线:只显示还没走的路,勾掉会落进「走过的路」。✦AI / ✎你;▶ 正在做置顶 */
-const daysSince = ts => Math.max(0, Math.floor((Date.now() - new Date(ts).getTime())/86400000));
 function renderTasks(all, parent, depth){
   let kids = all.filter(t => (t.parent_id || null) === parent && !t.done);
   if (!kids.length) return '';
