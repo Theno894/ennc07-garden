@@ -387,6 +387,115 @@ async function addTodoRow(title, due, pid){
   toast(due ? `记下了,${dueMeta(due).label} 到期 ✎` : '记进待办了 ✎');
   return true;
 }
+/* ===== 语言学习状态机 =====
+   new → flashcard_learning → exam_ready → mastered / suspended
+   ⚠️ 间隔用 success_streak,不能用 lifetime_review_count —— 后者只增不减,
+      失败多次的词会算出天文数字的间隔,从队列里静默消失 */
+const EXAM_STREAK = 3, EXAM_SPAN_DAYS = 8;
+const streakOf  = i => (i.success_streak ?? i.review_count ?? 0);
+const langDue   = i => !i.last_reviewed_at ||
+  (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, streakOf(i)) * 86400000;
+/* 在闪卡队列里的:排除已长成、待毕业考、已放下 */
+const inFlashcards = i => !i.mastered && !['mastered','exam_ready','suspended'].includes(i.status||'');
+const flashDue  = i => inFlashcards(i) && langDue(i);
+/* 够不够格毕业:连胜 ≥3 次,且本轮连胜首尾跨度 ≥8 天 */
+const canGraduate = (streak, firstAt) =>
+  streak >= EXAM_STREAK && !!firstAt &&
+  (Date.now() - new Date(firstAt).getTime()) >= EXAM_SPAN_DAYS * 86400000;
+
+/* 毕业考:给 GPT Live 的提示词(目标词绝不外露给自己看之外的提示) */
+function examPrompt(list){
+  return `我要做语言毕业考。下面有一组目标表达,你必须严格遵守规则。
+
+【绝对不能做】
+· 不要把这些表达列出来给我看
+· 不要说「请用 XXX 造句」「XXX 是什么意思」
+· 不要在提问里出现目标表达本身、它的中文释义、或明显的同源词
+
+【要做的】
+1. 针对每个目标表达,设计一个自然的对话情境 —— 这个情境要让该表达成为最贴切的说法
+2. 用日常聊天的方式跟我聊,全程不透露正在考哪一个
+3. 看我会不会主动说出来
+4. 我没说出来 → 换一个完全不同的情境,再给一次机会
+5. 两次机会都没说出来 → 判 FAIL。不要教会我之后再算我通过
+6. 我只说了意思相近的普通句子 → 也判 FAIL
+   (交流本身是成功的,但这说明该表达还没变成我的主动词汇)
+
+【目标表达】
+${list.map(i=>`· ${i.expression}${i.meaning?` —— ${String(i.meaning).slice(0,40)}`:''}  [${i.lang==='en'?'英语':'日语'}]`).join('\n')}
+
+【考完后】
+用这个格式给我结果,一行一个,不要别的话:
+PASS｜表达｜我说出来的那一句
+FAIL｜表达｜没通过的原因
+
+如果聊天中你发现我有值得学的新表达(最多 4 个,别贪多),再加几行:
+NEW｜表达｜中文意思｜一句例句
+
+最后提醒我一句:「把上面几行复制回灵感花园的毕业考场」。`;
+}
+
+/* 把 Live 给的 PASS/FAIL/NEW 几行解析出来 */
+function parseExamResult(txt, pool){
+  const norm = s => String(s||'').trim().toLowerCase()
+    .replace(/^[·\-*•\s]+/,'').replace(/[.。!！?？,，]+$/,'').replace(/\s+/g,' ');
+  const out = { pass:[], fail:[], nw:[], unknown:[] };
+  for (const raw of String(txt||'').split('\n')){
+    const parts = raw.trim().split(/[｜|]/).map(s=>s.trim());
+    const tag = (parts[0]||'').toUpperCase().replace(/[^A-Z]/g,'');
+    if (!['PASS','FAIL','NEW'].includes(tag)) continue;
+    const expr = parts[1]; if (!expr) continue;
+    if (tag === 'NEW'){ out.nw.push({ expression:expr, meaning:parts[2]||'', example:parts[3]||'' }); continue; }
+    const n = norm(expr);
+    const hit = pool.find(i => norm(i.expression) === n)
+             || pool.find(i => norm(i.expression).includes(n) || n.includes(norm(i.expression)));
+    if (!hit){ out.unknown.push(expr); continue; }
+    if (out.pass.some(x=>x.item.id===hit.id) || out.fail.some(x=>x.item.id===hit.id)) continue;  // 同一个词只算一次
+    (tag==='PASS' ? out.pass : out.fail).push({ item:hit, note:parts[2]||'' });
+  }
+  return out;
+}
+/* 把结果写进花园:PASS→已长成 · FAIL→打回闪卡 · NEW→候选箱 */
+async function applyExamResult(res){
+  const now = new Date().toISOString();
+  for (const { item, note } of res.pass){
+    await q(sb.from('lang_items').update({
+      status:'mastered', mastered:true, mastered_at:now, last_exam_at:now,
+      exam_attempt_count:(item.exam_attempt_count||0)+1,
+      example: item.example || note || null,          // 把你真的说出来的那句留作证据
+    }).eq('id', item.id), true);
+  }
+  for (const { item } of res.fail){
+    await q(sb.from('lang_items').update({
+      status:'flashcard_learning', success_streak:0, review_count:0,
+      first_streak_success_at:null, last_reviewed_at:now, last_exam_at:now,
+      exam_attempt_count:(item.exam_attempt_count||0)+1,
+      exam_fail_count:(item.exam_fail_count||0)+1,     // lifetime 不动,历史保住
+    }).eq('id', item.id), true);
+  }
+  for (const c of res.nw){
+    await q(sb.from('lang_candidates').insert({
+      lang: /[ぁ-んァ-ヶー]/.test(c.expression) ? 'ja' : 'en',
+      expression: c.expression, meaning: c.meaning || null,
+      example: c.example || null, source: 'gpt_live',
+    }), true);   // 撞到去重索引会静默跳过,正常
+  }
+}
+
+/* 把提示词摊开给你看/手动复制 */
+function showExamPrompt(txt){
+  closeModal(false);
+  document.body.insertAdjacentHTML('beforeend', `
+   <div class="modal-mask"><div class="modal" style="max-width:640px">
+    <div class="spread"><span class="chip">🎓 毕业考提示词</span><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
+    <div class="muted" style="font-size:12px;margin:8px 0">整段复制到 GPT 语音对话里。目标词在最后,<b>别自己先看</b> 😌</div>
+    <textarea readonly style="width:100%;height:340px;font-size:12.5px;line-height:1.6">${esc(txt)}</textarea>
+   </div></div>`);
+  const m = document.querySelector('.modal-mask');
+  m.addEventListener('click', e => { if (e.target === m) m.remove(); });
+  m.querySelector('[data-mclose]').onclick = () => m.remove();
+}
+
 /* 邮件早报 / X 雷达 / 随手记 上的「＋待办」都走这里 */
 function bindTodoAdders(after){
   document.querySelectorAll('[data-t2add]').forEach(b => b.onclick = async (ev) => {
@@ -553,8 +662,7 @@ VIEWS.today = async function(){
   const snoozed = acts.snoozed || [];
   const doneToday = acts.done || [];
   const notSnoozed = arr => arr.filter(x => !snoozed.includes(x.sid));
-  const dueLang = (langAll||[]).filter(i => !i.last_reviewed_at ||
-    (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000);
+  const dueLang = (langAll||[]).filter(flashDue);
   const projCands = notSnoozed((projs||[]).map(p=>({t:'项目', title:p.name, sub:p.next_step||p.description||'', st:p.status, go:'proj', gid:p.id, sid:p.id})));
   const seedCands = notSnoozed((seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), sub:(e.content||'').slice(0,42), st:e.status, go:'grow', gid:e.id, sid:e.id})));
   // 语言是「一个复习任务」而不是固定某个词:队列会随复习动态变化,复习完自动完成
@@ -866,8 +974,7 @@ VIEWS.today = async function(){
 // 从今日进入:复习整个到期队列(从点的那个词开始),可随时点「结束复习」停下
 async function startReviewQueue(startId){
   const items = (await q(sb.from('lang_items').select('*').eq('mastered', false))) || [];
-  const due = items.filter(i => !i.last_reviewed_at ||
-    (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000);
+  const due = items.filter(flashDue);
   if (!due.length){ toast('今天没有要复习的词'); return; }
   if (startId){ const k = due.findIndex(x => x.id === startId); if (k > 0){ const [it] = due.splice(k,1); due.unshift(it); } }
   startReview(due);
@@ -1440,15 +1547,20 @@ async function calcStreak(){
 }
 VIEWS.lang = async function(){
   const today = todayStr();
-  const [items, streak, insights] = await Promise.all([
+  const [items, streak, insights, cands] = await Promise.all([
     q(sb.from('lang_items').select('*').order('created_at',{ascending:false})),
     calcStreak(),
     q(sb.from('ai_insights').select('*').eq('scope','lang_monthly').order('date',{ascending:false}).limit(1)),
+    q(sb.from('lang_candidates').select('*').eq('handled',false).order('created_at',{ascending:false}), true),
   ]);
-  const due = (items||[]).filter(i => !i.mastered && (!i.last_reviewed_at ||
-    (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, i.review_count) * 86400000)).slice(0,6);
-  const mastered = (items||[]).filter(i => i.mastered);
+  const due = (items||[]).filter(flashDue).slice(0,6);
+  const mastered = (items||[]).filter(i => i.mastered || i.status==='mastered');
   const totalN = (items||[]).length;
+  // —— 毕业考场 ——
+  const examReady = (items||[]).filter(i => i.status === 'exam_ready');
+  const stuckOnes = examReady.filter(i => (i.exam_fail_count||0) >= 3);
+  const lastExamAt = (items||[]).map(i=>i.last_exam_at).filter(Boolean).sort().pop();
+  const examIdle = lastExamAt ? daysSince(lastExamAt) : null;
   const col = lang => {
     const fwd = lang==='en'?'英语':'日语';
     const recent = (items||[]).filter(i => i.lang===lang).slice(0,4);
@@ -1475,13 +1587,73 @@ VIEWS.lang = async function(){
       <span class="muted"><b style="color:var(--ink);font-size:19px">${totalN}</b> 个词</span>
       <span class="muted"><b style="color:var(--done);font-size:19px">${mastered.length}</b> 已长成</span>
       <span class="muted"><b style="color:var(--grow);font-size:19px">${due.length}</b> 待复习</span>
+      ${examReady.length?`<span class="muted"><b style="color:var(--yellow,#b98b1a);font-size:19px">${examReady.length}</b> 待毕业考</span>`:''}
     </div>
+    ${examReady.length ? `
+    <div class="card" style="margin-bottom:22px">
+      <div class="spread">
+        <div class="doodle"><span style="font-size:17px">🎓</span>
+          <b style="font-family:var(--hand-zh);font-size:19px">毕业考场</b></div>
+        <span class="muted" style="font-size:12.5px">${examIdle===null?'还没考过':`上次考试 ${examIdle} 天前`}</span>
+      </div>
+      <div class="muted" style="font-size:12.5px;margin-top:2px">
+        这 ${examReady.length} 个表达已经扛过闪卡 —— 现在要试试<b>能不能真的说出来</b></div>
+      <div class="row" style="margin-top:12px">
+        ${examReady.slice(0,20).map(i=>`<span class="chip click" data-word="${i.id}">${esc(i.expression)}${(i.exam_fail_count||0)?` <span style="opacity:.6">✕${i.exam_fail_count}</span>`:''}</span>`).join('')}
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button class="primary" id="exam-copy">① 复制提示词</button>
+        <button class="ghost" id="exam-see" style="font-size:12.5px">看看写了什么</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px">
+        复制 → 开 GPT 语音 → 粘贴 → 它会藏着目标词跟你聊</div>
+      <div class="wave"></div>
+      <div class="muted" style="font-size:12.5px">② 考完了,把它给的那几行贴进来 ——</div>
+      <textarea id="exam-in" placeholder="PASS｜read too much into｜I wouldn't read too much into it.&#10;FAIL｜お邪魔します｜没主动说出来&#10;NEW｜brush it off｜一笑置之｜She just brushed it off." style="margin-top:8px;height:96px;font-size:12.5px"></textarea>
+      <div class="spread" style="margin-top:8px">
+        <span class="muted" style="font-size:12px">PASS 的直接长成 · FAIL 的打回闪卡 · NEW 的进候选箱</span>
+        <button class="primary" id="exam-apply">写进花园</button>
+      </div>
+      ${examIdle !== null && examIdle >= 7 ? `<div class="note" style="margin-top:12px"><div class="muted" style="font-size:12.5px">
+        ⚠️ 已经 ${examIdle} 天没考了。这些词现在<b>不在闪卡队列里</b>,也没被考 —— 它们正在慢慢忘掉。</div></div>` : ''}
+      ${stuckOnes.length ? `<div class="note" style="margin-top:12px">
+        <div class="muted" style="font-size:12.5px">这几个考挂 3 次以上了。有时候不是你的问题,是这个表达对你现在的场景没那么必要 ——</div>
+        ${stuckOnes.map(i=>`<div class="itemline" style="padding:6px 0">
+          <div class="desc" style="flex:1">${esc(i.expression)}<span class="muted" style="font-size:11px;margin-left:6px">挂了 ${i.exam_fail_count} 次</span></div>
+          <div class="row" style="gap:8px;flex:0 0 auto">
+            <button class="ghost" data-exkeep="${i.id}" style="font-size:11.5px">还想要</button>
+            <button class="ghost" data-exdrop="${i.id}" style="font-size:11.5px;color:var(--mute)">放下</button>
+          </div></div>`).join('')}
+      </div>` : ''}
+    </div>` : ''}
+    ${(cands||[]).length ? `
+    <div class="card" style="margin-bottom:22px">
+      <div class="spread">
+        <div class="doodle"><span style="font-size:16px">📥</span>
+          <b style="font-family:var(--hand-zh);font-size:19px">候选箱 (${cands.length})</b></div>
+        <button class="ghost" id="cand-none" style="font-size:11.5px;color:var(--mute)">都不要了</button>
+      </div>
+      <div class="muted" style="font-size:12.5px;margin-top:2px">
+        聊天里冒出来的表达。<b>先待在这儿,你点了「收下」才进闪卡</b> —— 免得学习债越滚越多</div>
+      ${cands.slice(0,12).map(c=>`<div class="itemline" style="padding:8px 0;align-items:flex-start">
+        <div style="flex:1">
+          <div class="exp" style="font-weight:500">${esc(c.expression)}
+            <span class="muted" style="font-size:11px;margin-left:4px">${c.lang==='en'?'EN':'JA'}</span></div>
+          ${c.meaning?`<div class="muted" style="font-size:12.5px">${esc(c.meaning)}</div>`:''}
+          ${c.example?`<div class="muted" style="font-size:12px;font-style:italic;opacity:.8">${esc(c.example)}</div>`:''}
+        </div>
+        <div class="row" style="gap:8px;flex:0 0 auto">
+          <button class="ghost" data-candyes="${c.id}" style="font-size:11.5px">收下 🌱</button>
+          <button class="ghost" data-candno="${c.id}" style="font-size:11.5px;color:var(--mute)">不用</button>
+        </div></div>`).join('')}
+      ${cands.length>12?`<div class="muted" style="font-size:12px;margin-top:8px">还有 ${cands.length-12} 个,处理完这批再看</div>`:''}
+    </div>` : ''}
     <div class="grid g2">${col('en')}${col('ja')}</div>
     <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">${due.length ? `今天有 ${due.length} 个词在静静想你` : '今天没有词在等你,温室很安静'}</h2>
       ${due.length ? '<button class="primary" id="focus-review">▶ 一个个见它们</button>' : ''}</div>
     <div class="grid g2">
       ${due.map(i=>`<div class="card projcard" data-word="${i.id}">
-        <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">浇过 ${i.review_count} 次</span></div>
+        <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">连对 ${streakOf(i)}/${EXAM_STREAK}</span></div>
         <h3>${esc(i.expression)}</h3>
         <div class="tool-hint muted">点开复习 →</div>
       </div>`).join('') || '<div class="dashed" style="padding:20px;text-align:center"><div class="muted">词们都睡着了,明天再来看看 🌙</div></div>'}
@@ -1565,6 +1737,59 @@ VIEWS.lang = async function(){
     b.disabled = false;
   });
   $('#focus-review') && ($('#focus-review').onclick = () => startReview(due));
+  /* ——— 毕业考场 ——— */
+  $('#exam-copy') && ($('#exam-copy').onclick = async (ev) => {
+    const txt = examPrompt(examReady.slice(0,5));      // 一场最多考 5 个,考太多会失焦
+    try { await navigator.clipboard.writeText(txt); celebrate(ev.currentTarget, ['🎓','✦','✧']); toast('复制好了,去开 GPT 语音粘贴 🎓'); }
+    catch { showExamPrompt(txt); toast('复制不了,手动选中下面这段'); }
+  });
+  $('#exam-see') && ($('#exam-see').onclick = () => showExamPrompt(examPrompt(examReady.slice(0,5))));
+  document.querySelectorAll('[data-exkeep]').forEach(b => b.onclick = async () => {
+    await q(sb.from('lang_items').update({ exam_fail_count: 0 }).eq('id', b.dataset.exkeep));
+    toast('好,再给它一次机会 🌱'); VIEWS.lang();
+  });
+  document.querySelectorAll('[data-exdrop]').forEach(b => b.onclick = async () => {
+    await q(sb.from('lang_items').update({ status:'suspended' }).eq('id', b.dataset.exdrop));
+    toast('放下了。不是每个词都得学会 🍂'); VIEWS.lang();
+  });
+  $('#exam-in') && keepDraft($('#exam-in'), 'exam');
+  $('#exam-apply') && ($('#exam-apply').onclick = async (ev) => {
+    const txt = $('#exam-in').value.trim();
+    if (!txt) return toast('先把 Live 给的那几行贴进来');
+    const res = parseExamResult(txt, examReady);
+    if (!res.pass.length && !res.fail.length && !res.nw.length)
+      return toast('没读到 PASS / FAIL / NEW 开头的行,格式对吗?');
+    await applyExamResult(res);
+    if (res.pass.length) celebrate(ev.currentTarget, ['🌿','🎓','✦','✧']);
+    bounce(document.querySelector('.bean'), 'cheer');
+    clearDraft('exam');
+    const bits = [];
+    if (res.pass.length) bits.push(`${res.pass.length} 个长成了 🌿`);
+    if (res.fail.length) bits.push(`${res.fail.length} 个回炉`);
+    if (res.nw.length)   bits.push(`${res.nw.length} 个进候选箱`);
+    if (res.unknown.length) bits.push(`${res.unknown.length} 个没对上(${res.unknown.slice(0,2).join('、')})`);
+    toast(bits.join(' · ')); VIEWS.lang();
+  });
+  /* ——— 候选箱 ——— */
+  document.querySelectorAll('[data-candyes]').forEach(b => b.onclick = async () => {
+    const c = (cands||[]).find(x=>x.id===b.dataset.candyes); if (!c) return;
+    celebrate(b, ['🌱','✦','✧']);
+    await q(sb.from('lang_items').insert({
+      lang:c.lang, expression:c.expression, meaning:c.meaning||null,
+      example:c.example||null, source:'gpt_live', status:'new' }));
+    await q(sb.from('lang_candidates').update({ handled:true }).eq('id', c.id), true);
+    await bumpCheckin(c.lang, 1);
+    toast('收下了,明天开始复习它 🌱'); VIEWS.lang();
+  });
+  document.querySelectorAll('[data-candno]').forEach(b => b.onclick = async () => {
+    await q(sb.from('lang_candidates').update({ handled:true }).eq('id', b.dataset.candno), true);
+    toast('那就不学它'); VIEWS.lang();
+  });
+  $('#cand-none') && ($('#cand-none').onclick = async () => {
+    if (!confirm(`把这 ${cands.length} 个候选表达全部清掉?`)) return;
+    await q(sb.from('lang_candidates').update({ handled:true }).eq('handled', false), true);
+    toast('候选箱清空了'); VIEWS.lang();
+  });
 };
 // 保存一张查词卡到温室
 async function saveCard(lang, card){
@@ -1584,7 +1809,9 @@ async function openWord(id){
     <h2>${esc(i.expression)}</h2>
     <div style="margin:8px 0">${esc(i.meaning||'(还没有释义，点「AI 重查」补上)')}</div>
     ${i.example?`<div class="muted" style="font-size:13.5px">${esc(i.example)}</div>`:''}
-    <div class="muted" style="font-size:12px;margin-top:8px">浇过 ${i.review_count} 次</div>
+    <div class="muted" style="font-size:12px;margin-top:8px">连对 ${streakOf(i)}/${EXAM_STREAK} · 一共学过 ${i.lifetime_review_count ?? i.review_count ?? 0} 次${
+      (i.exam_fail_count||0)?` · 毕业考挂过 ${i.exam_fail_count} 次`:''}${
+      i.status==='exam_ready'?' · 🎓 等着毕业考':i.status==='suspended'?' · 🍂 已放下':''}</div>
     <div class="row" style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
       <button data-wr="forgot">没记住 ↻</button>
       <button class="primary" data-wr="remembered">记得 ✓</button>
@@ -1628,9 +1855,26 @@ async function openWord(id){
 /* 专注复习:一次一张卡 */
 async function srsMark(i, kind){
   await bumpCheckin(i.lang, 0);   // 复习也算今天浇过水
-  if (kind === 'remembered') return q(sb.from('lang_items').update({ review_count: (i.review_count||0)+1, last_reviewed_at: new Date().toISOString() }).eq('id', i.id));
-  if (kind === 'forgot')     return q(sb.from('lang_items').update({ review_count: 0, last_reviewed_at: new Date().toISOString() }).eq('id', i.id));
-  if (kind === 'mastered')   return q(sb.from('lang_items').update({ mastered: true }).eq('id', i.id));
+  const now  = new Date().toISOString();
+  const life = (i.lifetime_review_count ?? i.review_count ?? 0) + 1;
+  if (kind === 'remembered'){
+    const streak = streakOf(i) + 1;
+    const first  = i.first_streak_success_at || now;     // 本轮连胜的起点
+    const grad   = canGraduate(streak, first);
+    if (grad) toast('这个词可以去毕业考了 🎓');
+    return q(sb.from('lang_items').update({
+      success_streak: streak, lifetime_review_count: life,
+      review_count: streak,                              // 兼容旧代码/定时任务
+      first_streak_success_at: first, last_reviewed_at: now,
+      status: grad ? 'exam_ready' : 'flashcard_learning',
+    }).eq('id', i.id));
+  }
+  if (kind === 'forgot') return q(sb.from('lang_items').update({
+      success_streak: 0, lifetime_review_count: life, review_count: 0,
+      first_streak_success_at: null, last_reviewed_at: now, status: 'flashcard_learning',
+    }).eq('id', i.id));
+  if (kind === 'mastered') return q(sb.from('lang_items').update({
+      mastered: true, status: 'mastered', mastered_at: now }).eq('id', i.id));
 }
 function startReview(list){
   let idx = 0;
