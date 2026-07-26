@@ -593,15 +593,22 @@ VIEWS.today = async function(){
       ${energy ? `<span class="muted">按 ${energyLabel} · 已完成 ${doneCount}/${todo.length}</span>` : ''}</div>
     <div class="row" style="margin-bottom:6px"><input class="small-in" id="todo-in" placeholder="今天还有什么事?写下来…">
       <button id="todo-add">＋ 待办</button><button id="todo-done">✓ 已做</button></div>
-    <div class="muted" style="margin-bottom:14px;font-size:12px">「＋ 待办」放进下面照料;「✓ 已做」直接记进今天我做到了 🏆</div>
-    <div class="grid g3">
-      ${(!energy && !todo.length) ? '<div class="dashed" style="padding:22px;text-align:center"><div class="desc">先在上面选一个「今日能量」<br><span class="muted" style="font-size:13px">我就端上刚刚好的量 🌱</span></div></div>'
-        : (todo.map((x,i)=>{ const done = isDone(x); const isL = x.go==='lang'; const sub = isL ? (langCleared ? '今天的词都复习完了 🌿' : `还有 ${dueLang.length} 个到期,点开继续`) : (x.sub||''); return `<div class="card projcard ${done?'card-done':''}" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${done?'<span class="chip done"><span class="dot"></span>已完成</span>':chip(x.st)}</div>
-        <h3 style="${done?'text-decoration:line-through;color:var(--mute)':''}">${esc(x.title)}</h3><div class="desc">${esc(sub)}</div>
-        <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">${done?'↩ 撤销':'✓ 完成'}</button>${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="padding:2px 0;font-size:12px;color:var(--danger)">删掉</button>`:`<button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button>`}</div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':x.go==='lang'?'去复习 →':''}</span></div></div>`; }).join('')
-        || '<div class="card"><div class="desc">今天没有待办。去「捕捉」写下第一句,或点「生长」逛逛你的灵感。</div></div>')}
-    </div>
-    <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 记了 ${winsToday.length} 个做到了`:''}${(en||ja)?` · 浇过语言的水`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
+    <div class="muted" style="margin-bottom:14px;font-size:12px">「＋ 待办」要做的 ·「✓ 已做」已经做完的,都会算进今天完成</div>
+    ${(()=>{ const undone = todo.filter(x=>!isDone(x)), fin = todo.filter(x=>isDone(x));
+      const cards = (!energy && !todo.length)
+        ? '<div class="dashed" style="padding:22px;text-align:center"><div class="desc">先在上面选一个「今日能量」<br><span class="muted" style="font-size:13px">我就端上刚刚好的量 🌱</span></div></div>'
+        : (undone.map((x,i)=>{ const isL = x.go==='lang'; const sub = isL ? (langCleared ? '今天的词都复习完了 🌿' : `还有 ${dueLang.length} 个到期,点开继续`) : (x.sub||''); return `<div class="card projcard" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${chip(x.st)}</div>
+          <h3>${esc(x.title)}</h3><div class="desc">${esc(sub)}</div>
+          <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">✓ 完成</button>${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="padding:2px 0;font-size:12px;color:var(--danger)">删掉</button>`:`<button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button>`}</div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':x.go==='lang'?'去复习 →':''}</span></div></div>`; }).join('')
+          || (fin.length ? '<div class="dashed" style="padding:20px;text-align:center"><div class="muted">今天该照料的都照料完了 🌿</div></div>'
+                         : '<div class="card"><div class="desc">今天没有待办。去「随手记」写下第一句,或点「生长」逛逛你的灵感。</div></div>'));
+      const list = fin.length ? `<div class="card" style="margin-top:12px;padding:12px 16px">
+        <div class="muted" style="font-size:13px">✓ 今天完成的 (${fin.length})</div>
+        ${fin.map(x=>`<div class="itemline" style="padding:5px 0"><div class="desc" style="flex:1;text-decoration:line-through;color:var(--mute)">${esc(x.title)}<span class="muted" style="font-size:11px;margin-left:6px">${esc(x.t)}</span></div>
+          <div class="row" style="gap:8px;flex:0 0 auto"><button class="ghost" data-done="${x.sid}" style="font-size:11.5px">↩ 撤销</button>${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="font-size:11.5px;color:var(--danger)">×</button>`:''}</div></div>`).join('')}
+      </div>` : '';
+      return `<div class="grid g3">${cards}</div>${list}`; })()}
+    <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 突破了 ${winsToday.length} 件`:''}${(en||ja)?` · 浇过语言的水`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
     <h2 class="sec">邮件早报</h2>
     <div class="${b?'card':'note'}">
       ${b ? `<div class="spread"><b>${esc(b.date)} · 重要邮件 ${b.important_count} 封</b></div>
@@ -628,7 +635,7 @@ VIEWS.today = async function(){
         <div class="spread">
           <div><div class="doodle"><svg viewBox="0 0 24 24" width="19" style="color:var(--yellow)"><path d="M7 4h10v4a5 5 0 0 1-10 0V4z" fill="currentColor"/><path d="M12 13v4M9 20h6" stroke="var(--trunk)" stroke-width="2" stroke-linecap="round"/><path d="M7 5H4.5c0 2.2 1.2 3.6 2.8 3.9M17 5h2.5c0 2.2-1.2 3.6-2.8 3.9" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
             <b style="font-family:var(--hand-zh);font-size:19px">今天我做到了</b></div>
-            <div class="muted" style="font-size:12.5px;margin-top:2px">记下一件小事,肯定自己的行动</div></div>
+            <div class="muted" style="font-size:12.5px;margin-top:2px">那些曾经不敢、做不到、没试过,但今天做到了的事</div></div>
         </div>
         <div class="wave"></div>
         <div class="row" style="margin-bottom:10px"><input class="small-in" id="win-in" placeholder="今天我做到了…"><button class="primary" id="win-add">记一笔 ✎</button></div>
@@ -734,9 +741,12 @@ VIEWS.today = async function(){
   };
   const addTodoDone = async () => {
     const v = $('#todo-in').value.trim(); if (!v) return toast('先写一件事');
-    celebrate($('#todo-done'), ['🏆','✦','✧','✦']);
-    await q(sb.from('wins').insert({ date: today, text: v }));
-    clearDraft('todo'); toast('记下了,你做到了 🏆'); route();
+    celebrate($('#todo-done'), ['✓','✦','✧','✦']);
+    const sid = 'm-' + Date.now();
+    await q(sb.from('daily_state').upsert({ date: today, energy: energy||'mid',
+      actions: { ...acts, manual: [ ...(acts.manual||[]), { sid, title: v } ], done: [ ...(acts.done||[]), sid ] },
+      updated_at: new Date().toISOString() }));
+    clearDraft('todo'); toast('记进今天完成的了 ✓'); route();
   };
   $('#todo-add') && ($('#todo-add').onclick = addTodo);
   $('#todo-done') && ($('#todo-done').onclick = addTodoDone);
