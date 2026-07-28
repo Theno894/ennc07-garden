@@ -1882,12 +1882,28 @@ function startReview(list){
     document.querySelector('.modal-mask')?.remove();
     if (idx >= list.length){ toast('复习完成 🌿 共 ' + list.length + ' 张'); route(); return; }
     const i = list[idx];
+    const zh   = i.lang === 'en' ? '英语' : '日语';
+    // 正面放中文,让你先「说得出」;没有释义的词退回旧模式(否则正面是空的)
+    const hasMean = !!String(i.meaning || '').trim();
     document.body.insertAdjacentHTML('beforeend', `
      <div class="modal-mask"><div class="modal" style="max-width:520px;text-align:center">
-      <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><div class="row" style="gap:10px"><span class="muted">${idx+1} / ${list.length}</span><button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
-      <h2 style="margin:28px 0 10px;font-size:26px">${esc(i.expression)}</h2>
-      <div id="rev-mean" class="hidden"><div style="margin:6px 0">${esc(i.meaning||'(没写意思,凭感觉回想)')}</div>${i.example?`<div class="muted" style="font-size:13px">${esc(i.example)}</div>`:''}</div>
-      <button id="rev-flip" class="ghost" style="margin:6px 0 18px">翻面看答案 ↺</button>
+      <div class="spread"><span class="chip">${zh}</span><div class="row" style="gap:10px"><span class="muted">${idx+1} / ${list.length}</span><button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
+      ${hasMean ? `
+        <h2 style="margin:26px 0 4px;font-size:23px;line-height:1.4">${esc(i.meaning)}</h2>
+        <div class="muted" style="font-size:13px;margin-bottom:4px">想一想 —— 用${zh}怎么说?</div>
+        <div id="rev-mean" class="hidden">
+          <div class="wave"></div>
+          <div style="font-size:26px;font-weight:600;margin:2px 0 6px">${esc(i.expression)}</div>
+          ${i.example ? `<div class="muted" style="font-size:13px">${esc(i.example)}</div>` : ''}
+        </div>`
+      : `
+        <h2 style="margin:28px 0 4px;font-size:26px">${esc(i.expression)}</h2>
+        <div class="muted" style="font-size:13px;margin-bottom:4px">这条还没有释义 —— 凭感觉回想</div>
+        <div id="rev-mean" class="hidden">
+          <div class="wave"></div>
+          ${i.example ? `<div class="muted" style="font-size:13px">${esc(i.example)}</div>` : '<div class="muted" style="font-size:13px">去语言页点开它,补一个释义 🌱</div>'}
+        </div>`}
+      <button id="rev-flip" class="ghost" style="margin:8px 0 18px">翻面看答案 ↺</button>
       <div class="row" style="justify-content:center">
         <button data-r="forgot">没记住 ↻</button>
         <button data-r="remembered">记得 ✓</button>
@@ -1896,7 +1912,10 @@ function startReview(list){
      </div></div>`);
     const mask = document.querySelector('.modal-mask');
     mask.addEventListener('click', ev => { if (ev.target === mask){ mask.remove(); route(); } });
-    mask.querySelector('#rev-flip').onclick = () => mask.querySelector('#rev-mean').classList.remove('hidden');
+    mask.querySelector('#rev-flip').onclick = (ev) => {
+      mask.querySelector('#rev-mean').classList.remove('hidden');
+      ev.currentTarget.style.display = 'none';        // 翻过了就把按钮收掉
+    };
     mask.querySelector('[data-end]').onclick = () => { mask.remove(); toast('今天复习就到这 🌿'); route(); };
     mask.querySelectorAll('[data-r]').forEach(b => b.onclick = async () => { await srsMark(i, b.dataset.r); idx++; render(); });
   };
