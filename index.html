@@ -418,8 +418,11 @@ async function addTodoRow(title, due, pid){
       失败多次的词会算出天文数字的间隔,从队列里静默消失 */
 const EXAM_STREAK = 3, EXAM_SPAN_DAYS = 8;
 const streakOf  = i => (i.success_streak ?? i.review_count ?? 0);
-const langDue   = i => !i.last_reviewed_at ||
-  (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, streakOf(i)) * 86400000;
+/* 刚收进来的新词不算「今天到期」—— 你几秒钟前才看过它的释义,
+   现在考等于没考,而且会把「语言复习」从已完成里翻回来。满 24 小时后才进队列。 */
+const langDue   = i => i.last_reviewed_at
+  ? (Date.now() - new Date(i.last_reviewed_at).getTime()) > Math.pow(2, streakOf(i)) * 86400000
+  : (Date.now() - new Date(i.created_at || 0).getTime()) > 86400000;
 /* 在闪卡队列里的:排除已长成、待毕业考、已放下 */
 const inFlashcards = i => !i.mastered && !['mastered','exam_ready','suspended'].includes(i.status||'');
 const flashDue  = i => inFlashcards(i) && langDue(i);
@@ -427,6 +430,20 @@ const flashDue  = i => inFlashcards(i) && langDue(i);
 const canGraduate = (streak, firstAt) =>
   streak >= EXAM_STREAK && !!firstAt &&
   (Date.now() - new Date(firstAt).getTime()) >= EXAM_SPAN_DAYS * 86400000;
+
+/* AI 查词时把读音拼进了 meaning 里,复习时要把它拆出来藏到背面 ——
+   正面看到 /ˌserənˈdɪpəti/ 或「こもれび」,就等于看到答案了 */
+function splitPron(i){
+  const m = String(i.meaning || '').trim();
+  if (i.pron) return { pron: i.pron, rest: m };
+  let hit = m.match(/^\/[^/]{1,48}\/\s*/);                                  // 英语:开头的 /音标/
+  if (!hit) hit = m.match(/^[ぁ-んァ-ヶーゝゞ・･\s]{1,28}(?=[一-鿿a-zA-Z(（])/); // 日语:开头的一串假名
+  if (hit && hit[0].trim()){
+    const rest = m.slice(hit[0].length).trim();
+    if (rest) return { pron: hit[0].trim(), rest };     // 拆完还有东西才算数
+  }
+  return { pron:'', rest:m };
+}
 
 /* 毕业考:给 GPT Live 的提示词(目标词绝不外露给自己看之外的提示) */
 function examPrompt(list){
@@ -762,6 +779,12 @@ VIEWS.today = async function(){
   const room = Math.max(0, energyNeed - undoneN);
   todo = [...manual, ...urgent, ...noteDone, ...soft.slice(0, room)];
   const langCleared = dueLang.length === 0;   // 到期词都复习完了
+  // 今天清空过一次就记一笔 —— 之后再收新词,也不会把「语言复习」翻回未完成
+  if (langCleared && (langAll||[]).length && !doneToday.includes('lang-review')){
+    doneToday.push('lang-review');
+    q(sb.from('daily_state').upsert({ date: today, energy: energy || 'mid',
+      actions: { ...acts, done: doneToday }, updated_at: new Date().toISOString() }), true);
+  }
   const isDone = x => x.ro || doneToday.includes(x.sid) || taskDone.has(x.sid) || (x.go === 'lang' && langCleared);
   const doneCount = todo.filter(isDone).length;
   const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" style="flex:1;text-align:left"><b>${label}</b><br><span class="muted" style="font-size:12px">${tip}</span></button>`;
@@ -1964,16 +1987,18 @@ function startReview(list){
     const i = list[idx];
     const zh   = i.lang === 'en' ? '英语' : '日语';
     // 正面放中文,让你先「说得出」;没有释义的词退回旧模式(否则正面是空的)
-    const hasMean = !!String(i.meaning || '').trim();
+    const { pron, rest } = splitPron(i);      // 读音拆出来,跟着生词一起放背面
+    const hasMean = !!rest;
     document.body.insertAdjacentHTML('beforeend', `
      <div class="modal-mask"><div class="modal" style="max-width:520px;text-align:center">
       <div class="spread"><span class="chip">${zh}</span><div class="row" style="gap:10px"><span class="muted">${idx+1} / ${list.length}</span><button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
       ${hasMean ? `
-        <h2 style="margin:26px 0 4px;font-size:23px;line-height:1.4">${esc(i.meaning)}</h2>
+        <h2 style="margin:26px 0 4px;font-size:23px;line-height:1.4">${esc(rest)}</h2>
         <div class="muted" style="font-size:13px;margin-bottom:4px">想一想 —— 用${zh}怎么说?</div>
         <div id="rev-mean" class="hidden">
           <div class="wave"></div>
-          <div style="font-size:26px;font-weight:600;margin:2px 0 6px">${esc(i.expression)}</div>
+          <div style="font-size:26px;font-weight:600;margin:2px 0 2px">${esc(i.expression)}</div>
+          ${pron ? `<div class="muted" style="font-size:14px;margin-bottom:6px">${esc(pron)}</div>` : '<div style="height:4px"></div>'}
           ${i.example ? `<div class="muted" style="font-size:13px">${esc(i.example)}</div>` : ''}
         </div>`
       : `
