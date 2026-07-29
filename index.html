@@ -675,13 +675,18 @@ VIEWS.today = async function(){
   const pjName = {}; (projs||[]).forEach(p => pjName[p.id] = p.name);
   // 低:只端逾期+今天到期 · 中/高:加上三天内。三天以外的待办不上今日页,安静待在待办清单里
   const maxRank = {low:1, mid:2, high:2}[energy] ?? 2;
-  const liveTasks = (taskAll||[]).filter(t => !t.dropped && t.due &&
-    (!t.done || (t.done_at||'').slice(0,10) === today));   // 今天做完的也留着,好落进「今天完成的」
-  const urgent = notSnoozed(liveTasks
+  const liveTasks = (taskAll||[]).filter(t => !t.dropped && (
+    (t.due && !t.done)                                   // 待做的:只看有截止日期的
+    || (t.done && (t.done_at||'').slice(0,10) === today) // 今天完成的:不管有没有日期、在哪儿勾的,全算
+  ));
+  const urgent = (liveTasks
     .map(t => ({ ...dueMeta(t.due), row:t }))
-    .filter(x => x.rank <= maxRank)
-    .sort((a,b) => a.rank - b.rank || (a.row.due < b.row.due ? -1 : 1))
-    .map(x => ({ t:'待办', title:x.row.title, sub:[x.label, x.row.project_id ? pjName[x.row.project_id] : ''].filter(Boolean).join(' · '),
+    // 已完成的一律显示:不受能量档位限制,也不受「今天先不看」影响
+    .filter(x => x.row.done || (x.rank <= maxRank && !snoozed.includes('task-'+x.row.id)))
+    .sort((a,b) => a.rank - b.rank || ((a.row.due||'') < (b.row.due||'') ? -1 : 1))
+    .map(x => ({ t: x.row.project_id ? '项目' : '待办',
+                 title:x.row.title,
+                 sub:[x.label, x.row.project_id ? pjName[x.row.project_id] : ''].filter(Boolean).join(' · '),
                  st:'seed', go:'', gid:'', sid:'task-'+x.row.id, due:x.row.due })));
   const pickOne = arr => arr.length ? arr[Math.floor(Math.random()*arr.length)] : null;
   // 选了能量才端菜;每天第一次(或能量变化时)选一次,之后固定不变
