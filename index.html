@@ -688,13 +688,13 @@ VIEWS.today = async function(){
     .map(x => ({ t: x.row.project_id ? '项目' : '待办',
                  title:x.row.title,
                  sub:[x.label, x.row.project_id ? pjName[x.row.project_id] : ''].filter(Boolean).join(' · '),
-                 st:'seed', go:'', gid:'', sid:'task-'+x.row.id, due:x.row.due })));
+                 st:'seed', go:'', gid:'', sid:'task-'+x.row.id, due:x.row.due, pid:x.row.project_id })));
   const taskDone = new Set(liveTasks.filter(t=>t.done).map(t=>'task-'+t.id));
   // 今天手写进「走过的路」的记录,也算今天做的事(只读:它本来就是记录,没有"撤销"一说)
   const noteDone = (updAll||[])
     .filter(n => (n.created_at||'').slice(0,10) === today && !String(n.note||'').startsWith('[拆解请求]'))
     .map(n => ({ t: pjName[n.project_id] || '记录', title:n.note, sub:'', st:'seed',
-                 go:'', gid:'', sid:'note-'+n.id, ro:true }));
+                 go:'', gid:'', sid:'note-'+n.id, ro:true, pid:n.project_id }));
   const pickOne = arr => arr.length ? arr[Math.floor(Math.random()*arr.length)] : null;
   // 选了能量才端菜;每天第一次(或能量变化时)选一次,之后固定不变
   let todo = acts.todo;
@@ -798,10 +798,30 @@ VIEWS.today = async function(){
           <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">✓ 完成</button>${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="padding:2px 0;font-size:12px;color:var(--danger)">删掉</button>`:`<button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button>`}</div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':x.go==='lang'?'去复习 →':''}</span></div></div>`; }).join('')
           || (fin.length ? '<div class="dashed" style="padding:20px;text-align:center"><div class="muted">今天该照料的都照料完了 🌿</div></div>'
                          : '<div class="card"><div class="desc">今天没有待办。去「随手记」写下第一句,或点「生长」逛逛你的灵感。</div></div>'));
+      // 一行的样子
+      const finRow = (x, isHead) => `<div class="itemline" style="padding:5px 0${isHead?';border-bottom:none':''}">
+        <div class="desc" style="flex:1;color:var(--mute);${(x.ro||isHead)?'':'text-decoration:line-through'};${isHead?'font-weight:600':''}">${x.ro?'✎ ':''}${esc(x.title)}<span class="muted" style="font-size:11px;margin-left:6px">${esc(x.t)}</span></div>
+        <div class="row" style="gap:8px;flex:0 0 auto">${x.ro?'':`<button class="ghost" data-done="${x.sid}" style="font-size:11.5px">↩ 撤销</button>`}${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="font-size:11.5px;color:var(--danger)">×</button>`:''}</div></div>`;
+      // 勾了「完成」的项目,变成它今天那些事的父节点;没勾的项目,它的事照旧平铺
+      const doneProj = fin.filter(x => x.go === 'proj');
+      const headIds  = new Set(doneProj.map(x => x.sid));
+      const kids = {}, flatRows = [];
+      fin.forEach(x => {
+        if (x.go === 'proj' && headIds.has(x.sid)) return;              // 组头单独渲染
+        if (x.pid && headIds.has(x.pid)) (kids[x.pid] = kids[x.pid] || []).push(x);
+        else flatRows.push(x);
+      });
       const list = fin.length ? `<div class="card" style="margin-top:12px;padding:12px 16px">
         <div class="muted" style="font-size:13px">✓ 今天完成的 (${fin.length})</div>
-        ${fin.map(x=>`<div class="itemline" style="padding:5px 0"><div class="desc" style="flex:1;color:var(--mute);${x.ro?'':'text-decoration:line-through'}">${x.ro?'✎ ':''}${esc(x.title)}<span class="muted" style="font-size:11px;margin-left:6px">${esc(x.t)}</span></div>
-          <div class="row" style="gap:8px;flex:0 0 auto">${x.ro?'':`<button class="ghost" data-done="${x.sid}" style="font-size:11.5px">↩ 撤销</button>`}${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="font-size:11.5px;color:var(--danger)">×</button>`:''}</div></div>`).join('')}
+        ${doneProj.map(p => `<div style="margin-top:4px">
+          ${finRow(p, true)}
+          ${(kids[p.sid]||[]).length
+            ? `<div style="margin-left:8px;padding-left:12px;border-left:2px solid var(--line,#e6e2d8)">
+                 ${(kids[p.sid]||[]).map(k => finRow(k, false)).join('')}
+               </div>`
+            : `<div class="muted" style="margin:0 0 6px 20px;font-size:12px">今天照料过它 🌿</div>`}
+        </div>`).join('')}
+        ${flatRows.map(x => finRow(x, false)).join('')}
       </div>` : '';
       return `<div class="grid g3">${cards}</div>${list}`; })()}
     <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 突破了 ${winsToday.length} 件`:''}${(en||ja)?` · 浇过语言的水`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
