@@ -176,6 +176,16 @@ button:active{transform:translateY(1px) scale(.985)}
 @keyframes heartbeat{0%,100%{transform:scale(1)}25%{transform:scale(1.22)}50%{transform:scale(.96)}75%{transform:scale(1.1)}}
 .heartbeat{animation:heartbeat .7s ease}
 @keyframes sparkle{0%{opacity:0;transform:scale(.4) rotate(0)}50%{opacity:1;transform:scale(1.15) rotate(90deg)}100%{opacity:0;transform:scale(.7) rotate(180deg)}}
+/* 骨架屏:先把页面的形状画出来,让人觉得内容在到达,而不是页面消失了 */
+@keyframes breathe{0%,100%{opacity:.26}50%{opacity:.55}}
+.skel{animation:fadeIn .22s ease both}
+.sk-line{background:var(--line,#e6e2d8);border-radius:6px;animation:breathe 1.9s ease-in-out infinite}
+.sk-card{border:1.6px dashed var(--line,#e6e2d8);border-radius:18px 14px 20px 13px;
+  height:128px;animation:breathe 1.9s ease-in-out infinite}
+.sk-card.sm{height:104px;border-radius:14px 19px 13px 17px}
+.sk-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}
+.sk-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px}
+@media(max-width:720px){.sk-grid,.sk-grid3{grid-template-columns:1fr}}
 .spark{position:fixed;pointer-events:none;font-size:20px;z-index:120;animation:sparkle .75s ease forwards}
 .toast{transition:opacity .25s ease,transform .25s ease}
 .toast.show{transform:translateX(-50%) translateY(-4px)}
@@ -635,12 +645,32 @@ const langUI = { libOpen:false, q:'', filter:'全部', sort:'recent' };  // 词�
 let growView = 'list';  // 生长页:列表 or 星图
 let gratHistOpen = false;  // 感恩日记:过往是否展开
 let gratExtra = 0;         // 感恩日记:额外加了几栏
+/* 骨架屏:手机把页面赶出内存后重新加载,不至于先空一片再蹦出来 */
+const SKELETON = `<div class="skel">
+  <div class="sk-line" style="width:76px;height:10px"></div>
+  <div class="sk-line" style="width:min(430px,74%);height:27px;margin-top:16px;border-radius:9px;animation-delay:.12s"></div>
+  <div class="sk-line" style="width:min(300px,54%);height:13px;margin-top:14px;animation-delay:.24s"></div>
+  <div class="sk-grid"><div class="sk-card"></div><div class="sk-card" style="animation-delay:.18s"></div></div>
+  <div class="sk-line" style="width:120px;height:14px;margin-top:26px;animation-delay:.3s"></div>
+  <div class="sk-grid3">
+    <div class="sk-card sm"></div>
+    <div class="sk-card sm" style="animation-delay:.14s"></div>
+    <div class="sk-card sm" style="animation-delay:.28s"></div>
+  </div>
+  <div class="muted" style="text-align:center;margin-top:26px;font-size:12.5px;animation:breathe 1.9s ease-in-out infinite">花园正在醒来…</div>
+</div>`;
 async function route(){
   if (!session) return;
   renderNav();
   const cur = location.hash.replace('#','') || 'today';
-  ($('#view').innerHTML = '<p class="muted">花园加载中…</p>');
-  await (VIEWS[cur] || VIEWS.today)();
+  const view = $('#view');
+  // 冷启动(页面刚被重新加载):立刻上骨架
+  // 切换标签页:先等 120ms,数据来得快就完全不闪骨架
+  let timer = null;
+  if (!view.innerHTML.trim()) view.innerHTML = SKELETON;
+  else timer = setTimeout(() => { view.innerHTML = SKELETON; }, 120);
+  try { await (VIEWS[cur] || VIEWS.today)(); }
+  finally { if (timer) clearTimeout(timer); }
   window.scrollTo(0,0);
 }
 
