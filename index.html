@@ -632,7 +632,7 @@ async function route(){
 /* ================= 今日 ================= */
 VIEWS.today = async function(){
   const today = todayStr();
-  const [ds, projs, seeds, checkins, brief, news, langAll, taskAll] = await Promise.all([
+  const [ds, projs, seeds, checkins, brief, news, langAll, taskAll, updAll] = await Promise.all([
     q(sb.from('daily_state').select('*').eq('date', today).maybeSingle(), true),
     q(sb.from('projects').select('*').eq('status','growing').order('updated_at',{ascending:false})),
     q(sb.from('entries').select('*').in('status',['seed','growing']).order('updated_at',{ascending:false})),
@@ -641,6 +641,7 @@ VIEWS.today = async function(){
     q(sb.from('news_briefs').select('*').order('date',{ascending:false}).limit(6), true),
     q(sb.from('lang_items').select('*').eq('mastered', false)),
     q(sb.from('project_tasks').select('*'), true),
+    q(sb.from('project_updates').select('*'), true),
   ]);
   const [winsAll, gratAll] = await Promise.all([
     q(sb.from('wins').select('*').order('created_at',{ascending:false}), true),
@@ -688,6 +689,12 @@ VIEWS.today = async function(){
                  title:x.row.title,
                  sub:[x.label, x.row.project_id ? pjName[x.row.project_id] : ''].filter(Boolean).join(' · '),
                  st:'seed', go:'', gid:'', sid:'task-'+x.row.id, due:x.row.due })));
+  const taskDone = new Set(liveTasks.filter(t=>t.done).map(t=>'task-'+t.id));
+  // 今天手写进「走过的路」的记录,也算今天做的事(只读:它本来就是记录,没有"撤销"一说)
+  const noteDone = (updAll||[])
+    .filter(n => (n.created_at||'').slice(0,10) === today && !String(n.note||'').startsWith('[拆解请求]'))
+    .map(n => ({ t: pjName[n.project_id] || '记录', title:n.note, sub:'', st:'seed',
+                 go:'', gid:'', sid:'note-'+n.id, ro:true }));
   const pickOne = arr => arr.length ? arr[Math.floor(Math.random()*arr.length)] : null;
   // 选了能量才端菜;每天第一次(或能量变化时)选一次,之后固定不变
   let todo = acts.todo;
@@ -704,12 +711,13 @@ VIEWS.today = async function(){
   // 手动添加的临时事项(当天有效),排在最前
   const manual = (acts.manual || []).map(m => ({ t:'我加的', title:m.title, sub:'', st:'growing', go:'', gid:'', sid:m.sid, manual:true }));
   // 顺序:我加的 → 临期待办 → 项目/种子/语言(剩多少位置端多少)
-  const soft = (todo||[]).filter(x => !x.manual && !String(x.sid||'').startsWith('task-'));
-  const room = Math.max(0, energyNeed - manual.length - urgent.length);
-  todo = [...manual, ...urgent, ...soft.slice(0, room)];
+  const soft = (todo||[]).filter(x => !x.manual && !/^(task|note)-/.test(String(x.sid||'')));
+  // 位置只被「还没做的」占用,已完成的不挤掉推荐
+  const undoneN = manual.filter(m=>!doneToday.includes(m.sid)).length + urgent.filter(u=>!taskDone.has(u.sid)).length;
+  const room = Math.max(0, energyNeed - undoneN);
+  todo = [...manual, ...urgent, ...noteDone, ...soft.slice(0, room)];
   const langCleared = dueLang.length === 0;   // 到期词都复习完了
-  const taskDone = new Set(liveTasks.filter(t=>t.done).map(t=>'task-'+t.id));
-  const isDone = x => doneToday.includes(x.sid) || taskDone.has(x.sid) || (x.go === 'lang' && langCleared);
+  const isDone = x => x.ro || doneToday.includes(x.sid) || taskDone.has(x.sid) || (x.go === 'lang' && langCleared);
   const doneCount = todo.filter(isDone).length;
   const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" style="flex:1;text-align:left"><b>${label}</b><br><span class="muted" style="font-size:12px">${tip}</span></button>`;
   $('#view').innerHTML = `
@@ -792,8 +800,8 @@ VIEWS.today = async function(){
                          : '<div class="card"><div class="desc">今天没有待办。去「随手记」写下第一句,或点「生长」逛逛你的灵感。</div></div>'));
       const list = fin.length ? `<div class="card" style="margin-top:12px;padding:12px 16px">
         <div class="muted" style="font-size:13px">✓ 今天完成的 (${fin.length})</div>
-        ${fin.map(x=>`<div class="itemline" style="padding:5px 0"><div class="desc" style="flex:1;text-decoration:line-through;color:var(--mute)">${esc(x.title)}<span class="muted" style="font-size:11px;margin-left:6px">${esc(x.t)}</span></div>
-          <div class="row" style="gap:8px;flex:0 0 auto"><button class="ghost" data-done="${x.sid}" style="font-size:11.5px">↩ 撤销</button>${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="font-size:11.5px;color:var(--danger)">×</button>`:''}</div></div>`).join('')}
+        ${fin.map(x=>`<div class="itemline" style="padding:5px 0"><div class="desc" style="flex:1;color:var(--mute);${x.ro?'':'text-decoration:line-through'}">${x.ro?'✎ ':''}${esc(x.title)}<span class="muted" style="font-size:11px;margin-left:6px">${esc(x.t)}</span></div>
+          <div class="row" style="gap:8px;flex:0 0 auto">${x.ro?'':`<button class="ghost" data-done="${x.sid}" style="font-size:11.5px">↩ 撤销</button>`}${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="font-size:11.5px;color:var(--danger)">×</button>`:''}</div></div>`).join('')}
       </div>` : '';
       return `<div class="grid g3">${cards}</div>${list}`; })()}
     <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 突破了 ${winsToday.length} 件`:''}${(en||ja)?` · 浇过语言的水`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
