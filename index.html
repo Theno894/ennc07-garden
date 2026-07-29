@@ -343,12 +343,27 @@ function md(src){
   return out;
 }
 /* 草稿自动保存:输入框里没保存的字,刷新/切后台/黑屏都不会丢 */
+/* 草稿保护:手机把页面从内存赶出去之后,没保存的字还在。
+   关键是记住「你当时改的是哪一份底稿」——
+   底稿没变 → 恢复你的改动;底稿变了(说明已经存进数据库了) → 丢掉旧草稿。
+   这样连「已经填了内容的输入框」(比如感恩日记)也能被保护。 */
+let draftRestored = 0;
 function keepDraft(el, key){
   if (!el) return;
   const k = 'garden-draft:' + key;
-  const saved = localStorage.getItem(k);
-  if (saved && !el.value) el.value = saved;
-  const save = () => { el.value ? localStorage.setItem(k, el.value) : localStorage.removeItem(k); };
+  const base = el.value || '';          // 页面渲染出来的原始值(来自数据库)
+  try {
+    const d = JSON.parse(localStorage.getItem(k) || 'null');
+    if (d && typeof d.v === 'string' && d.base === base && d.v !== base){
+      el.value = d.v;
+      if (d.v.trim().length > 3 && !draftRestored++)
+        setTimeout(() => toast('刚才没写完的,帮你留着了 ✎'), 500);
+    }
+  } catch { localStorage.removeItem(k); }
+  const save = () => {
+    if (el.value === base) localStorage.removeItem(k);
+    else localStorage.setItem(k, JSON.stringify({ v: el.value, base, at: Date.now() }));
+  };
   el.addEventListener('input', save);
   el.addEventListener('blur', save);
   document.addEventListener('visibilitychange', save);
@@ -1737,9 +1752,11 @@ VIEWS.lang = async function(){
   // 点任意词 → 统一词卡
   document.querySelectorAll('[data-word]').forEach(el => el.onclick = () => openWord(el.dataset.word));
   // 手动加(不查AI)
+  ['en','ja'].forEach(l => keepDraft($('#add-'+l), 'lookup-'+l));   // 查到一半切走,词还在
   document.querySelectorAll('[data-manual]').forEach(b => b.onclick = async () => {
     const lang = b.dataset.manual;
     const exp = $('#add-'+lang).value.trim(); if (!exp) return toast('先输入一个词');
+    clearDraft('lookup-'+lang);
     const m = prompt('意思(可留空,之后可 AI 补):', ''); if (m === null) return;
     await q(sb.from('lang_items').insert({ lang, expression: exp, meaning: m || null, source:'manual' }));
     await bumpCheckin(lang, 1); toast('收进温室了 🌱'); route();
