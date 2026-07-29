@@ -176,6 +176,29 @@ button:active{transform:translateY(1px) scale(.985)}
 @keyframes heartbeat{0%,100%{transform:scale(1)}25%{transform:scale(1.22)}50%{transform:scale(.96)}75%{transform:scale(1.1)}}
 .heartbeat{animation:heartbeat .7s ease}
 @keyframes sparkle{0%{opacity:0;transform:scale(.4) rotate(0)}50%{opacity:1;transform:scale(1.15) rotate(90deg)}100%{opacity:0;transform:scale(.7) rotate(180deg)}}
+/* ===== 临帖页 ===== */
+#write-view{display:none}
+body.writing #write-view{display:flex;flex-direction:column;position:fixed;inset:0;z-index:60;
+  background:var(--paper,#faf7f0);overscroll-behavior:none}
+body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!important}
+.wr-bar{display:flex;align-items:center;gap:14px;padding:9px 18px;flex-wrap:wrap;
+  background:rgba(255,255,255,.5);border-bottom:1px solid var(--line,#e6e2d8)}
+.wr-bar.bot{border-bottom:none;border-top:1px solid var(--line,#e6e2d8);justify-content:center;gap:22px}
+.wr-ctl{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--mute,#8a8578)}
+.wr-ctl input[type=range]{width:88px}
+.wr-wrap{flex:1;position:relative;padding:16px;min-height:0}
+.wr-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:11px;height:100%}
+.wr-cell{position:relative;background:#fffdf7;border:1.4px solid #ddd5c2;border-radius:3px;overflow:hidden}
+.wr-cell.tian{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'%3E%3Cg stroke='%23ddd5c2' stroke-width='.7' stroke-dasharray='4 4'%3E%3Cpath d='M0 50h100M50 0v100'/%3E%3C/g%3E%3C/svg%3E");
+  background-size:100% 100%;background-repeat:no-repeat}
+.wr-cell.mi{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'%3E%3Cg stroke='%23ddd5c2' stroke-width='.7' stroke-dasharray='4 4'%3E%3Cpath d='M0 50h100M50 0v100M0 0l100 100M100 0L0 100'/%3E%3C/g%3E%3C/svg%3E");
+  background-size:100% 100%;background-repeat:no-repeat}
+.wr-tie{position:absolute;inset:0;display:block;background-image:url('tie.png');background-repeat:no-repeat;
+  image-rendering:auto;pointer-events:none}
+.wr-ch{position:absolute;right:3px;bottom:1px;font-size:10px;color:#c9c2b0;pointer-events:none;user-select:none}
+#wr-cv{position:absolute;left:16px;top:16px;touch-action:none;cursor:crosshair}
+@media(max-width:820px){.wr-grid{grid-template-columns:repeat(4,1fr)}}
+
 /* 骨架屏:先把页面的形状画出来,让人觉得内容在到达,而不是页面消失了 */
 @keyframes breathe{0%,100%{opacity:.26}50%{opacity:.55}}
 .skel{animation:fadeIn .22s ease both}
@@ -250,6 +273,7 @@ button:active{transform:translateY(1px) scale(.985)}
 </div>
 
 <main id="view"></main>
+<div id="write-view"></div>
 
 <nav class="mob" id="nav-mob"></nav>
 <div class="toast" id="toast"></div>
@@ -658,10 +682,121 @@ function setPassword(){
 
 /* ================= 路由 ================= */
 const VIEWS = {};
+
+/* ================= 临帖(全屏,#write) =================
+   字帖是一张雪碧图:10 列 × 10 行,每格 192px,顺序 = TIE_TEXT 的字序。
+   三层:田字格 → 字帖(可调深浅) → 你的笔迹(独立画布,清空只清这一层) */
+const TIE_TEXT = '书法协会成立很好祖国的书法艺术不因书写工具变化有所偏废我研究钢笔书法达四十年目的是让代钢笔书写同样可以传承祖国书法艺术使书写水平普遍提高有利于四化建设如今我年将古稀钢笔书法研究后继有人实堪欣';
+const TIE_COLS = 10, TIE_CELL = 192;
+const wr = { page:0, opacity:0.20, width:4, grid:'tian' };   // 状态放内存,深浅/笔宽记在 localStorage
+try { Object.assign(wr, JSON.parse(localStorage.getItem('garden-write') || '{}')); } catch {}
+const wrSave = () => localStorage.setItem('garden-write', JSON.stringify({ opacity:wr.opacity, width:wr.width, grid:wr.grid }));
+
+function tiePos(i, cell){                      // 第 i 个字在雪碧图里的 background 定位
+  const r = Math.floor(i / TIE_COLS), c = i % TIE_COLS;
+  const s = cell / TIE_CELL;
+  return `background-size:${TIE_COLS*TIE_CELL*s}px ${Math.ceil(TIE_TEXT.length/TIE_COLS)*TIE_CELL*s}px;background-position:${-c*cell}px ${-r*cell}px`;
+}
 const langUI = { libOpen:false, q:'', filter:'全部', sort:'recent' };  // 词库 UI 状态(跨渲染保留)
 let growView = 'list';  // 生长页:列表 or 星图
 let gratHistOpen = false;  // 感恩日记:过往是否展开
 let gratExtra = 0;         // 感恩日记:额外加了几栏
+/* ===== 临帖页:整页接管屏幕,退出回花园 ===== */
+async function openWrite(){
+  const PER = 24;                                     // 一屏 8×3
+  const total = Math.ceil(TIE_TEXT.length / PER);
+  wr.page = Math.min(wr.page, total-1);
+  document.body.classList.add('writing');
+  const host = document.getElementById('write-view');
+  const draw = () => {
+    const s = wr.page * PER, chs = TIE_TEXT.slice(s, s+PER).split('');
+    host.innerHTML = `
+      <div class="wr-bar">
+        <button class="ghost" id="wr-exit" style="font-size:13px">← 回花园</button>
+        <b style="font-family:var(--hand-zh);font-size:19px">临帖</b>
+        <span class="muted" style="font-size:12px">硬笔行书 · 林似春</span>
+        <div style="flex:1"></div>
+        <label class="wr-ctl">字帖 <input type="range" id="wr-op" min="4" max="60" value="${Math.round(wr.opacity*100)}"></label>
+        <label class="wr-ctl">笔画 <input type="range" id="wr-wd" min="2" max="10" value="${wr.width}"></label>
+        <button class="ghost" id="wr-grid" style="font-size:12px">${wr.grid==='tian'?'田字格':wr.grid==='mi'?'米字格':'空白'}</button>
+        <button class="ghost" id="wr-clr" style="font-size:12px">清空</button>
+      </div>
+      <div class="wr-wrap"><div class="wr-grid" id="wr-grid-box">
+        ${chs.map((ch,k)=>`<div class="wr-cell ${wr.grid}"><i class="wr-tie" data-i="${s+k}"></i><span class="wr-ch">${esc(ch)}</span></div>`).join('')}
+      </div><canvas id="wr-cv"></canvas></div>
+      <div class="wr-bar bot">
+        <button class="ghost" id="wr-prev" ${wr.page===0?'disabled':''} style="font-size:13px">← 上一页</button>
+        <span class="muted" style="font-size:12.5px">第 ${wr.page+1} / ${total} 页 · 第 ${s+1}–${Math.min(s+PER,TIE_TEXT.length)} 字</span>
+        <button class="ghost" id="wr-next" ${wr.page>=total-1?'disabled':''} style="font-size:13px">下一页 →</button>
+      </div>`;
+    const box = host.querySelector('#wr-grid-box');
+    const paint = () => host.querySelectorAll('.wr-tie').forEach(el=>{
+      const cell = el.parentElement.clientWidth;
+      el.style.cssText = `opacity:${wr.opacity};${tiePos(+el.dataset.i, cell)}`;
+    });
+    requestAnimationFrame(paint);
+    /* ——— 笔迹画布 ——— */
+    const cv = host.querySelector('#wr-cv'), ctx = cv.getContext('2d');
+    let saved = null;
+    const fit = () => {
+      const r = box.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+      if (cv.width) saved = ctx.getImageData(0,0,cv.width,cv.height);
+      cv.style.width = r.width+'px'; cv.style.height = r.height+'px';
+      cv.width = r.width*d; cv.height = r.height*d;
+      ctx.setTransform(d,0,0,d,0,0);
+      ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#2f3b33';
+      if (saved) try { ctx.putImageData(saved,0,0); } catch {}
+      paint();
+    };
+    fit(); new ResizeObserver(fit).observe(box);
+    let drawing=false, px=0, py=0, penSeen=false;
+    const pos = e => { const r=cv.getBoundingClientRect(); return [e.clientX-r.left, e.clientY-r.top]; };
+    // 见过 Apple Pencil 之后就只认笔 —— 手掌撑在屏幕上不会画线
+    cv.addEventListener('pointerdown', e => {
+      if (e.pointerType==='pen') penSeen = true;
+      if (penSeen && e.pointerType!=='pen') return;
+      drawing=true; cv.setPointerCapture(e.pointerId); [px,py]=pos(e); e.preventDefault();
+    });
+    cv.addEventListener('pointermove', e => {
+      if (!drawing) return;
+      if (penSeen && e.pointerType!=='pen') return;
+      const [x,y]=pos(e);
+      const pr = (e.pressure>0 && e.pressure<1) ? e.pressure : 0.5;
+      ctx.lineWidth = wr.width * (0.5 + pr);
+      ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(x,y); ctx.stroke();
+      px=x; py=y; e.preventDefault();
+    });
+    ['pointerup','pointercancel','pointerleave'].forEach(k=>cv.addEventListener(k,()=>drawing=false));
+    /* ——— 控件 ——— */
+    const clear = () => ctx.clearRect(0,0,cv.width,cv.height);
+    host.querySelector('#wr-op').oninput = e => { wr.opacity=e.target.value/100; wrSave();
+      host.querySelectorAll('.wr-tie').forEach(el=>el.style.opacity=wr.opacity); };
+    host.querySelector('#wr-wd').oninput = e => { wr.width=+e.target.value; wrSave(); };
+    host.querySelector('#wr-clr').onclick = clear;
+    host.querySelector('#wr-grid').onclick = () => {
+      wr.grid = wr.grid==='tian' ? 'mi' : wr.grid==='mi' ? 'none' : 'tian'; wrSave(); draw(); };
+    host.querySelector('#wr-prev').onclick = () => { if(wr.page>0){ wr.page--; draw(); } };
+    host.querySelector('#wr-next').onclick = () => { if(wr.page<total-1){ wr.page++; draw(); } };
+    host.querySelector('#wr-exit').onclick = closeWrite;
+  };
+  draw();
+  await markWroteToday();
+}
+function closeWrite(){
+  document.body.classList.remove('writing');
+  document.getElementById('write-view').innerHTML = '';
+  if (location.hash === '#write') location.hash = '#today'; else route();
+}
+/* 打开过就算今天练过了 —— 和语言复习一样,计入今天完成的 */
+async function markWroteToday(){
+  const today = todayStr();
+  const ds = await q(sb.from('daily_state').select('*').eq('date',today).maybeSingle(), true);
+  const acts = ds?.actions || {};
+  if ((acts.done||[]).includes('write')) return;
+  await q(sb.from('daily_state').upsert({ date: today, energy: ds?.energy || 'mid',
+    actions: { ...acts, done: [ ...(acts.done||[]), 'write' ] }, updated_at: new Date().toISOString() }), true);
+}
+
 /* 骨架屏:手机把页面赶出内存后重新加载,不至于先空一片再蹦出来 */
 const SKELETON = `<div class="skel">
   <div class="sk-line" style="width:76px;height:10px"></div>
@@ -678,8 +813,13 @@ const SKELETON = `<div class="skel">
 </div>`;
 async function route(){
   if (!session) return;
-  renderNav();
   const cur = location.hash.replace('#','') || 'today';
+  if (cur === 'write') return openWrite();          // 临帖:全屏接管,不走标签栏
+  if (document.body.classList.contains('writing')){
+    document.body.classList.remove('writing');
+    document.getElementById('write-view').innerHTML = '';
+  }
+  renderNav();
   const view = $('#view');
   // 冷启动(页面刚被重新加载):立刻上骨架
   // 切换标签页:先等 120ms,数据来得快就完全不闪骨架
@@ -730,6 +870,9 @@ VIEWS.today = async function(){
   const seedCands = notSnoozed((seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), sub:(e.content||'').slice(0,42), st:e.status, go:'grow', gid:e.id, sid:e.id})));
   // 语言是「一个复习任务」而不是固定某个词:队列会随复习动态变化,复习完自动完成
   const langTask = (dueLang.length && !snoozed.includes('lang-review')) ? [{ t:'语言', title:'语言复习', sub:'点开走一遍到期队列', st:'growing', go:'lang', gid:'', sid:'lang-review' }] : [];
+  // 每日临帖:和语言复习同级的日常照料
+  const writeTask = snoozed.includes('write') ? [] :
+    [{ t:'临帖', title:'今天练字', sub:'硬笔行书 · 一页 24 个格子', st:'growing', go:'write', gid:'', sid:'write' }];
   const interleave = arrs => { const out=[]; for(let i=0;out.length<50;i++){ let any=false; for(const a of arrs){ if(a[i]){ out.push(a[i]); any=true; } } if(!any) break; } return out; };
   const energyNeed = {low:2, mid:4, high:6}[energy] || 4;
   const energyLabel = {low:'低能量',mid:'中等能量',high:'高能量'}[energy] || '';
@@ -761,7 +904,7 @@ VIEWS.today = async function(){
   // 选了能量才端菜;每天第一次(或能量变化时)选一次,之后固定不变
   let todo = acts.todo;
   if (energy && (!Array.isArray(todo) || acts.todoEnergy !== energy)){
-    const others = interleave([projCands, langTask]);         // 项目 + 语言复习任务
+    const others = interleave([projCands, langTask, writeTask]);   // 项目 + 语言复习 + 临帖
     const seed = pickOne(seedCands);                           // 至多 1 颗灵感种子
     const list = seed ? [seed] : [];
     for (const o of others){ if (list.length >= energyNeed) break; list.push(o); }
@@ -1069,6 +1212,10 @@ VIEWS.today = async function(){
     const g = c.dataset.go;
     if (g === 'proj'){ location.hash = '#projects'; setTimeout(() => openProject(c.dataset.gid), 600); }
     else if (g === 'lang'){ startReviewQueue(c.dataset.sid); }
+    else if (g === 'write'){
+      if (window.innerWidth < 820) return toast('练字要横屏,去 iPad 上打开花园吧 ✍️');
+      location.hash = '#write';
+    }
     else location.hash = '#grow';
   });
 };
