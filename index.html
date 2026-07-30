@@ -1219,6 +1219,7 @@ VIEWS.today = async function(){
       if (window.innerWidth < 820) return toast('练字要横屏,去 iPad 上打开花园吧 ✍️');
       location.hash = '#write';
     }
+    else if (g === 'grow' && c.dataset.gid) openSeed(c.dataset.gid);   // 就地打开这一颗,不用去一堆里翻
     else location.hash = '#grow';
   });
 };
@@ -1431,11 +1432,21 @@ async function openSeed(id){
     <h2>${esc(e.title||'')}</h2>
     <div class="desc" style="white-space:pre-wrap;margin-top:6px">${esc(e.content)}</div>
     <div class="row" style="margin-top:10px">${(e.tags||[]).map(t=>`<span class="chip">${esc(t)}</span>`).join('')}</div>
-    <div class="muted" style="font-size:12px;margin-top:10px">${fmtMD(e.occurred_on)} · ${STATUS_ZH[e.status]||e.status}</div>
+    ${e.next_step?`<div class="note" style="margin-top:12px"><div class="muted" style="font-size:12px">下一步</div><div class="desc">${esc(e.next_step)}</div></div>`:''}
+    <div class="wave"></div>
+    <div class="spread">
+      <span class="muted" style="font-size:12px">${fmtMD(e.occurred_on)} · ${STATUS_ZH[e.status]||e.status}</span>
+      <div class="row" style="gap:10px">
+        <button class="ghost" data-t2add="${esc((e.next_step||e.title||e.content||'').slice(0,60))}" style="font-size:12px">＋待办</button>
+        <button class="ghost" id="seed-grow" style="font-size:12px">去生长整理 →</button>
+      </div>
+    </div>
    </div></div>`);
   const mask=document.querySelector('.modal-mask');
   mask.addEventListener('click',ev=>{ if(ev.target===mask) closeModal(false); });
   mask.querySelector('[data-mclose]').onclick=()=>closeModal(false);
+  mask.querySelector('#seed-grow').onclick=()=>{ closeModal(false); location.hash='#grow'; };
+  bindTodoAdders(()=>closeModal(false));
 }
 
 /* ================= 项目 ================= */
