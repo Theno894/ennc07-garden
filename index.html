@@ -1535,8 +1535,9 @@ VIEWS.projects = async function(){
     <div class="grid g3">
       ${(projs||[]).map(p=>{
         const s = stat[p.id];
-        const prog = s && s.total ? Math.round(s.done/s.total*100) : p.progress;
-        const summary = s && s.total ? `已完成 ${s.done}/${s.total} 步` : (esc(p.next_step)||'点开做拆解');
+        const prog = projProgress(p, s?.done||0, s?.total||0);
+        const summary = p.target > 0 ? `${p.current||0} / ${p.target} ${esc(p.unit||'')}`
+                      : (s && s.total ? `已完成 ${s.done}/${s.total} 步` : (esc(p.next_step)||'点开做拆解'));
         return `<div class="card projcard" data-open="${p.id}">
           <div class="spread"><span class="chip">${esc(p.area||'项目')}</span>${chip(p.status)}</div>
           <h3>${esc(p.name)}</h3><div class="desc">${esc(p.description||'')}</div>
@@ -1584,17 +1585,42 @@ VIEWS.projects = async function(){
   $('#p-add').onclick = async () => {
     const name = prompt('项目名字:'); if (!name) return;
     const desc = prompt('一句话描述(可空):') || '';
-    await q(sb.from('projects').insert({ name, description: desc }));
-    toast('已种下新项目'); route();
+    // 数量型项目(2500 条 / 169 页 / 95 个字…):填了总数,进度就按个数算,不用假装拆任务
+    const t = prompt('这个项目有总数吗？有就填数字(比如 2500),没有就留空:', '');
+    const target = parseInt(t||'', 10);
+    const row = { name, description: desc };
+    if (target > 0){
+      row.target = target;
+      row.unit = (prompt('单位?(条/页/个/字,可留空)', '条') || '').trim() || null;
+      row.current = 0;
+    }
+    await q(sb.from('projects').insert(row));
+    toast(target>0 ? `已种下 · 目标 ${target}${row.unit||''}` : '已种下新项目'); route();
   };
   document.querySelectorAll('[data-open]').forEach(c => c.onclick = () => openProject(c.dataset.open));
 };
 
+/* 项目进度:填了 target 就按「做了多少 / 总共多少」算,否则按「勾了几个任务」算 */
+function projProgress(p, done, total){
+  if (p && p.target > 0) return Math.min(100, Math.round((p.current||0) / p.target * 100));
+  return total ? Math.round(done/total*100) : (p?.progress || 0);
+}
 async function recomputeProgress(id){
+  const p = await q(sb.from('projects').select('target,current').eq('id', id).maybeSingle(), true);
+  if (p && p.target > 0) return;                       // 数量型:进度归计数器管,别被任务数覆盖
   const tasks = await q(sb.from('project_tasks').select('done').eq('project_id', id)) || [];
   if (!tasks.length) return;
   const prog = Math.round(tasks.filter(t=>t.done).length / tasks.length * 100);
   await q(sb.from('projects').update({ progress: prog, status: prog>=100?'done':'growing', updated_at: new Date().toISOString() }).eq('id', id));
+}
+/* 计数器加数:超过目标自动封顶,满了自动收成「已完成」 */
+async function bumpCount(id, cur, target, n){
+  const v = Math.max(0, Math.min(target, (cur||0) + n));
+  const prog = Math.min(100, Math.round(v/target*100));
+  await q(sb.from('projects').update({ current:v, progress:prog,
+    status: prog>=100 ? 'done' : 'growing', updated_at:new Date().toISOString() }).eq('id', id));
+  if (prog>=100) toast('这个项目走完了 🌿');
+  return v;
 }
 function closeModal(refresh){ const m = document.querySelector('.modal-mask'); if (m) m.remove(); if (refresh) route(); }
 /* 一条主线:只显示还没走的路,勾掉会落进「走过的路」。✦AI / ✎你;▶ 正在做置顶 */
@@ -1647,7 +1673,8 @@ async function openProject(id){
   const pending = (ups||[]).find(u => u.note.startsWith('[拆解请求]'));
   const visibleUps = (ups||[]).filter(u => !u.note.startsWith('[拆解请求]'));
   const done = (tasks||[]).filter(t=>t.done).length, total = (tasks||[]).length;
-  const prog = total ? Math.round(done/total*100) : p.progress;
+  const prog = projProgress(p, done, total);
+  const isNum = !!(p.target > 0);          // 数量型:进度看计数器,不看勾了几个任务
   closeModal(false);
   document.body.insertAdjacentHTML('beforeend', `
    <div class="modal-mask"><div class="modal">
@@ -1656,9 +1683,21 @@ async function openProject(id){
     <div class="desc">${esc(p.description||'')}</div>
     <div class="bar"><i style="width:${prog}%"></i></div>
     <div class="spread"><span class="bignum" style="font-size:22px">${prog}%</span>${chip(p.status)}</div>
+    ${isNum ? `
+    <div class="note" style="margin-top:14px">
+      <div class="spread">
+        <div><b style="font-size:19px">${p.current||0}</b> <span class="muted">/ ${p.target} ${esc(p.unit||'')}</span>
+          <span class="muted" style="font-size:12px;margin-left:8px">还剩 ${Math.max(0,p.target-(p.current||0))}</span></div>
+        <div class="row" style="gap:6px">
+          ${[10,50,100,250].map(n=>`<button class="ghost" data-inc="${n}" style="font-size:12px">＋${n}</button>`).join('')}
+          <button class="ghost" data-setnum style="font-size:12px">改</button>
+        </div>
+      </div>
+    </div>` : ''}
     <div class="row" style="margin-top:14px">
       <button class="primary" data-ai="decompose">✨ AI 拆解子任务</button>
       <button data-ai="analyze">🔍 AI 看进展</button>
+      ${isNum ? '' : '<button class="ghost" data-mknum style="font-size:12.5px">改成数量型</button>'}
     </div>
     <div id="ai-out" class="note hidden" style="margin-top:12px;white-space:pre-wrap"></div>
 
@@ -1681,6 +1720,27 @@ async function openProject(id){
   const mask = document.querySelector('.modal-mask');
   mask.addEventListener('click', ev => { if (ev.target === mask) closeModal(true); });
   mask.querySelector('[data-mclose]').onclick = () => closeModal(true);
+  /* ——— 数量型项目的计数器 ——— */
+  mask.querySelectorAll('[data-inc]').forEach(b => b.onclick = async () => {
+    celebrate(b, ['✦','✧','🌿']);
+    const v = await bumpCount(id, p.current, p.target, +b.dataset.inc);
+    toast(`记下了 · ${v}/${p.target}${p.unit||''}`); openProject(id);
+  });
+  mask.querySelector('[data-setnum]') && (mask.querySelector('[data-setnum]').onclick = async () => {
+    const v = prompt(`已经做了多少？(总共 ${p.target}${p.unit||''})`, p.current||0);
+    if (v === null) return;
+    const n = Math.max(0, Math.min(p.target, parseInt(v,10) || 0));
+    await bumpCount(id, 0, p.target, n); toast('改好了'); openProject(id);
+  });
+  mask.querySelector('[data-mknum]') && (mask.querySelector('[data-mknum]').onclick = async () => {
+    const t = prompt('这个项目总共有多少？(只填数字,比如 2500)', ''); if (t === null) return;
+    const target = parseInt(t,10); if (!(target > 0)) return toast('要填一个大于 0 的数字');
+    const unit = (prompt('单位是什么？(条 / 页 / 个 / 字,可留空)', '条') || '').trim();
+    const cur = Math.max(0, Math.min(target, parseInt(prompt('现在已经做了多少？', '0')||'0', 10) || 0));
+    await q(sb.from('projects').update({ target, unit: unit||null, current: cur,
+      progress: Math.round(cur/target*100), updated_at:new Date().toISOString() }).eq('id', id));
+    toast('改成数量型了,以后按个数算进度 🌱'); openProject(id);
+  });
   mask.querySelectorAll('[data-task]').forEach(cb => cb.onchange = async () => {
     const tid = cb.dataset.task;
     // 勾掉 → 落进「走过的路」(连同它的子任务),清掉"正在做"
