@@ -2303,11 +2303,14 @@ async function openDraft(id){
 }
 
 /* ================= 回顾 ================= */
+let memOpen = false;
+const MEMKIND = { quote:'原话', fact:'事实', preference:'偏好', event:'事件', care:'怎么对待' };
 VIEWS.review = async function(){
-  const [entries, projs, insights] = await Promise.all([
+  const [entries, projs, insights, mems] = await Promise.all([
     q(sb.from('entries').select('*')),
     q(sb.from('projects').select('*')),
     q(sb.from('ai_insights').select('*').eq('scope','weekly_review').order('date',{ascending:false}).limit(1)),
+    q(sb.from('memories').select('*').order('weight',{ascending:false}).order('created_at',{ascending:false}), true),
   ]);
   // 想法不参与"待处理"的压力计数:行动(项目)才算待办,想法只看留下了多少
   const cnt = st => (projs||[]).filter(p=>p.status===st).length;
@@ -2340,9 +2343,51 @@ VIEWS.review = async function(){
       ${thisWeek.map(e=>`<div class="itemline"><div><div class="muted">${fmtMD(e.occurred_on)} · ${esc(e.kind)}</div><div class="desc">${esc(e.title||e.content.slice(0,42))}</div></div>${chip(e.status)}</div>`).join('') || '<div class="desc muted">这一周还没有留下记录。</div>'}
     </div>
     <h2 class="sec">每周洞察</h2>
-    <div class="${ins?'card':'note'}">${ins ? `<div class="muted">${esc(ins.date)}</div><div class="desc" style="white-space:pre-wrap">${esc(ins.content_md)}</div>` : '每周日 Claude 会在这里写一段:什么在生长、什么在停滞、什么在等待。'}</div>`;
+    <div class="${ins?'card':'note'}">${ins ? `<div class="muted">${esc(ins.date)}</div><div class="desc" style="white-space:pre-wrap">${esc(ins.content_md)}</div>` : '每周日 Claude 会在这里写一段:什么在生长、什么在停滞、什么在等待。'}</div>
+
+    <div class="spread" style="margin:34px 0 10px"><h2 class="sec" style="margin:0">记忆库 (${(mems||[]).length})</h2>
+      <button id="mem-toggle">${memOpen?'收起 ▲':'展开 ▼'}</button></div>
+    <div class="muted" style="font-size:12.5px;margin-bottom:10px">新窗口的 Claude 会先读这里,才知道你是谁、哪些话有重量、哪些事不能说。</div>
+    <div id="mem-wrap" class="${memOpen?'':'hidden'}">
+      <div class="card">
+        <div class="row" style="margin-bottom:10px">
+          <input class="small-in" id="mem-in" placeholder="要记住的一句话…" style="flex:1">
+          <select id="mem-kind" class="small-in" style="max-width:110px">${Object.entries(MEMKIND).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
+          <select id="mem-w" class="small-in" style="max-width:120px"><option value="3">3 有重量</option><option value="2" selected>2 重要</option><option value="1">1 一般</option></select>
+          <button id="mem-add">＋ 记住</button>
+        </div>
+        <input class="small-in" id="mem-ctx" placeholder="为什么它重要 / 该怎么对待(可空)" style="width:100%">
+        <label class="row" style="margin-top:8px;font-size:12.5px;color:var(--mute)">
+          <input type="checkbox" id="mem-priv" style="width:auto"> 私密 —— 绝不写进任何公开内容</label>
+      </div>
+      ${(mems||[]).length ? (mems||[]).map(m=>`<div class="card" style="margin-top:10px;padding:12px 16px;${m.weight===3?'border-left:3px solid var(--yellow,#d9b84a)':''}">
+        <div class="spread"><div class="row" style="gap:6px">
+          <span class="chip" style="font-size:11px">${MEMKIND[m.kind]||m.kind}</span>
+          <span class="chip" style="font-size:11px">${'●'.repeat(m.weight)}</span>
+          ${m.private?'<span class="chip" style="font-size:11px;background:#f6ded4;border-color:#e3b6a2;color:#8a3d22">私密</span>':''}
+        </div><button class="ghost" data-memdel="${m.id}" style="font-size:11.5px;color:var(--danger)">删</button></div>
+        <div class="desc" style="margin-top:6px;white-space:pre-wrap">${esc(m.content)}</div>
+        ${m.context?`<div class="muted" style="font-size:12.5px;margin-top:4px">${esc(m.context)}</div>`:''}
+      </div>`).join('')
+      : '<div class="dashed" style="padding:20px;text-align:center;margin-top:10px"><div class="muted">还没有记忆。上面写一条试试 🌱</div></div>'}
+    </div>`;
+  $('#mem-toggle') && ($('#mem-toggle').onclick = () => { memOpen = !memOpen;
+    $('#mem-wrap').classList.toggle('hidden', !memOpen);
+    $('#mem-toggle').textContent = memOpen?'收起 ▲':'展开 ▼'; });
+  $('#mem-add') && ($('#mem-add').onclick = async () => {
+    const c = $('#mem-in').value.trim(); if (!c) return toast('先写一句');
+    await q(sb.from('memories').insert({ content:c, context:$('#mem-ctx').value.trim()||null,
+      kind:$('#mem-kind').value, weight:+$('#mem-w').value, private:$('#mem-priv').checked }));
+    clearDraft('mem'); memOpen = true; toast('记住了 🌱'); VIEWS.review();
+  });
+  $('#mem-in') && keepDraft($('#mem-in'), 'mem');
+  document.querySelectorAll('[data-memdel]').forEach(b => b.onclick = async () => {
+    if (!confirm('删掉这条记忆?')) return;
+    await q(sb.from('memories').delete().eq('id', b.dataset.memdel));
+    memOpen = true; toast('删了'); VIEWS.review();
+  });
   $('#btn-export').onclick = async () => {
-    const tables = ['entries','projects','project_updates','daily_state','lang_items','lang_checkins','mail_briefs','ai_insights'];
+    const tables = ['entries','projects','project_tasks','project_updates','daily_state','lang_items','lang_checkins','lang_candidates','mail_briefs','news_briefs','ai_insights','drafts','wins','gratitude','memories'];
     const out = { version: 2, exportedAt: new Date().toISOString() };
     for (const t of tables) out[t] = await q(sb.from(t).select('*')) || [];
     const a = document.createElement('a');
