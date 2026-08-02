@@ -425,6 +425,8 @@ function clearDraft(key){
 /* ===== 待办:零散待办 与 项目内待办 共用一套逻辑 =====
    project_id 为空 = 零散待办;due 为空 = 无期限,永远不会主动催你 */
 let todoView = 'loose';        // loose(零散) | all(含项目内)
+let gMode = false;             // 「今天完成的」是否处于「归成项目」的选择态
+let gSel = new Set();          // 选中的行 sid
 const addDays = n => new Date(Date.now() + n*86400000).toISOString().slice(0,10);
 const daysSince = ts => Math.max(0, Math.floor((Date.now() - new Date(ts).getTime())/86400000));
 function dueMeta(due){
@@ -1028,30 +1030,47 @@ VIEWS.today = async function(){
           <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">✓ 完成</button>${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="padding:2px 0;font-size:12px;color:var(--danger)">删掉</button>`:`<button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button>`}</div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':x.go==='lang'?'去复习 →':''}</span></div></div>`; }).join('')
           || (fin.length ? '<div class="dashed" style="padding:20px;text-align:center"><div class="muted">今天该照料的都照料完了 🌿</div></div>'
                          : '<div class="card"><div class="desc">今天没有待办。去「随手记」写下第一句,或点「生长」逛逛你的灵感。</div></div>'));
+      // 能被「归成项目」搬走的:自己加的、项目待办、项目记录。其他(语言复习/项目卡本身)不动
+      const canGroup = x => !x.synth && (x.manual || /^(task|note)-/.test(String(x.sid||'')));
       // 一行的样子
-      const finRow = (x, isHead) => `<div class="itemline" style="padding:5px 0${isHead?';border-bottom:none':''}">
-        <div class="desc" style="flex:1;color:var(--mute);${(x.ro||isHead)?'':'text-decoration:line-through'};${isHead?'font-weight:600':''}">${x.ro?'✎ ':''}${esc(x.title)}<span class="muted" style="font-size:11px;margin-left:6px">${esc(x.t)}</span></div>
-        <div class="row" style="gap:8px;flex:0 0 auto">${x.ro?'':`<button class="ghost" data-done="${x.sid}" style="font-size:11.5px">↩ 撤销</button>`}${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="font-size:11.5px;color:var(--danger)">×</button>`:''}</div></div>`;
-      // 勾了「完成」的项目,变成它今天那些事的父节点;没勾的项目,它的事照旧平铺
+      const finRow = (x, isHead, nested) => `<div class="itemline" style="padding:5px 0${isHead?';border-bottom:none':''}">
+        ${gMode ? (canGroup(x)
+            ? `<button class="ghost" data-gpick="${x.sid}" style="flex:0 0 auto;font-size:14px;padding:0 8px 0 0;color:${gSel.has(x.sid)?'var(--ink,#333)':'var(--mute)'}">${gSel.has(x.sid)?'◉':'○'}</button>`
+            : '<span style="flex:0 0 auto;width:22px"></span>') : ''}
+        <div class="desc" style="flex:1;color:var(--mute);${(x.ro||isHead)?'':'text-decoration:line-through'};${isHead?'font-weight:600':''}">${x.ro&&!isHead?'✎ ':''}${esc(x.title)}${(x.t&&!nested)?`<span class="muted" style="font-size:11px;margin-left:6px">${esc(x.t)}</span>`:''}</div>
+        ${gMode ? '' : `<div class="row" style="gap:8px;flex:0 0 auto">${(x.ro||x.synth)?'':`<button class="ghost" data-done="${x.sid}" style="font-size:11.5px">↩ 撤销</button>`}${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="font-size:11.5px;color:var(--danger)">×</button>`:''}</div>`}</div>`;
+      // 勾了「完成」的项目 → 组头。没勾但今天有 2 件以上事的项目 → 补一个组头,保持 MECE
       const doneProj = fin.filter(x => x.go === 'proj');
       const headIds  = new Set(doneProj.map(x => x.sid));
+      const byPid = {};
+      fin.forEach(x => { if (x.pid && !headIds.has(x.sid)) (byPid[x.pid] = byPid[x.pid] || []).push(x); });
+      const synthHeads = Object.keys(byPid)
+        .filter(pid => byPid[pid].length >= 2 && !headIds.has(pid) && pjName[pid])
+        .map(pid => ({ title: pjName[pid], t:'项目', sid: pid, go:'proj', ro:true, synth:true }));
+      const groups = [...doneProj, ...synthHeads];
+      const allHeads = new Set(groups.map(g => g.sid));
       const kids = {}, flatRows = [];
       fin.forEach(x => {
-        if (x.go === 'proj' && headIds.has(x.sid)) return;              // 组头单独渲染
-        if (x.pid && headIds.has(x.pid)) (kids[x.pid] = kids[x.pid] || []).push(x);
+        if (allHeads.has(x.sid)) return;                                 // 组头单独渲染
+        if (x.pid && allHeads.has(x.pid)) (kids[x.pid] = kids[x.pid] || []).push(x);
         else flatRows.push(x);
       });
       const list = fin.length ? `<div class="card" style="margin-top:12px;padding:12px 16px">
-        <div class="muted" style="font-size:13px">✓ 今天完成的 (${fin.length})</div>
-        ${doneProj.map(p => `<div style="margin-top:4px">
+        <div class="spread"><div class="muted" style="font-size:13px">✓ 今天完成的 (${fin.length})</div>
+          ${fin.filter(canGroup).length >= 2
+            ? `<button class="ghost" data-gtoggle style="font-size:11.5px">${gMode?'取消':'⊕ 归成项目'}</button>` : ''}</div>
+        ${groups.map(p => `<div style="margin-top:4px">
           ${finRow(p, true)}
           ${(kids[p.sid]||[]).length
             ? `<div style="margin-left:8px;padding-left:12px;border-left:2px solid var(--line,#e6e2d8)">
-                 ${(kids[p.sid]||[]).map(k => finRow(k, false)).join('')}
+                 ${(kids[p.sid]||[]).map(k => finRow(k, false, true)).join('')}
                </div>`
             : `<div class="muted" style="margin:0 0 6px 20px;font-size:12px">今天照料过它 🌿</div>`}
         </div>`).join('')}
         ${flatRows.map(x => finRow(x, false)).join('')}
+        ${gMode ? `<div class="row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+            <button class="primary" data-gmake ${gSel.size?'':'disabled'} style="font-size:12.5px">把选中的 ${gSel.size} 条归成一个项目</button>
+          </div>` : ''}
       </div>` : '';
       return `<div class="grid g3">${cards}</div>${list}`; })()}
     <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 突破了 ${winsToday.length} 件`:''}${(en||ja)?` · 浇过语言的水`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
@@ -1218,6 +1237,48 @@ VIEWS.today = async function(){
     await q(sb.from('daily_state').upsert({ date: today, energy: energy||'mid', actions: { ...acts, manual: (acts.manual||[]).filter(m=>m.sid!==sid), done: (acts.done||[]).filter(x=>x!==sid) }, updated_at: new Date().toISOString() }));
     toast('删掉了'); route();
   });
+  /* ——— 把今天完成的几条,归成一个新项目 ——— */
+  const gt = document.querySelector('[data-gtoggle]');
+  if (gt) gt.onclick = () => { gMode = !gMode; if (!gMode) gSel.clear(); route(); };
+  document.querySelectorAll('[data-gpick]').forEach(b => b.onclick = ev => {
+    ev.stopPropagation();
+    const sid = b.dataset.gpick;
+    gSel.has(sid) ? gSel.delete(sid) : gSel.add(sid);
+    route();
+  });
+  const gm = document.querySelector('[data-gmake]');
+  if (gm) gm.onclick = async () => {
+    const picked = [...gSel]; if (!picked.length) return;
+    const name = (prompt('这几件事合起来,叫什么项目？', '') || '').trim(); if (!name) return;
+    const np = await q(sb.from('projects')
+      .insert({ name, status:'growing', progress:0 }).select().single());
+    if (!np) return;
+    const now = new Date().toISOString();
+    let leftover = (acts.manual || []).slice();
+    for (const sid of picked){
+      if (sid.startsWith('task-'))                                  // 项目待办:换个项目
+        await q(sb.from('project_tasks').update({ project_id: np.id }).eq('id', sid.slice(5)), true);
+      else if (sid.startsWith('note-'))                             // 项目记录:换个项目
+        await q(sb.from('project_updates').update({ project_id: np.id }).eq('id', sid.slice(5)), true);
+      else {                                                        // 自己加的:落成一条已完成的子任务
+        const m = leftover.find(x => x.sid === sid); if (!m) continue;
+        await q(sb.from('project_tasks').insert({ project_id: np.id, title: m.title,
+          done: true, done_at: now, source:'manual' }), true);
+        leftover = leftover.filter(x => x.sid !== sid);
+      }
+    }
+    if (leftover.length !== (acts.manual||[]).length)               // 搬走的从今日清单里摘掉
+      await q(sb.from('daily_state').upsert({ date: today, energy: energy||'mid',
+        actions: { ...acts, manual: leftover, done: (acts.done||[]).filter(x => !picked.includes(x)) },
+        updated_at: now }), true);
+    // 进度按「已经放进来的」算,但状态留在「正在生长」——刚建的项目不该立刻被判完成
+    const tks = await q(sb.from('project_tasks').select('done').eq('project_id', np.id), true) || [];
+    if (tks.length) await q(sb.from('projects').update({
+      progress: Math.round(tks.filter(t=>t.done).length / tks.length * 100),
+      status:'growing', updated_at: now }).eq('id', np.id), true);
+    gMode = false; gSel.clear();
+    toast(`「${name}」建好了,${picked.length} 件事都收进去了 🌿`); route();
+  };
   document.querySelectorAll('[data-dismiss]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation();
     const sid = b.dataset.dismiss; if (!sid) return;
