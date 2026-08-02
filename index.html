@@ -383,10 +383,25 @@ function md(src){
    底稿没变 → 恢复你的改动;底稿变了(说明已经存进数据库了) → 丢掉旧草稿。
    这样连「已经填了内容的输入框」(比如感恩日记)也能被保护。 */
 let draftRestored = 0;
+/* 注册表:一个 key 只对应「当前这一次渲染出来的那个框」。
+   以前每渲染一次就往 document 上挂一对监听,旧的永远不摘 ——
+   于是上一次渲染留下的僵尸监听,会在关页面时把已经清掉的草稿又写回去。 */
+const draftReg = new Map();           // key → { el, base, off }
+function saveOneDraft(key){
+  const r = draftReg.get(key);
+  if (!r || !r.el || !r.el.isConnected) return;   // 已经被换掉的旧框:不写
+  const k = 'garden-draft:' + key;
+  if (r.off || r.el.value === r.base) localStorage.removeItem(k);
+  else localStorage.setItem(k, JSON.stringify({ v: r.el.value, base: r.base, at: Date.now() }));
+}
+const saveAllDrafts = () => draftReg.forEach((_, key) => saveOneDraft(key));
+document.addEventListener('visibilitychange', saveAllDrafts);   // 只挂一次
+window.addEventListener('pagehide', saveAllDrafts);
 function keepDraft(el, key){
   if (!el) return;
   const k = 'garden-draft:' + key;
   const base = el.value || '';          // 页面渲染出来的原始值(来自数据库)
+  draftReg.set(key, { el, base, off:false });
   try {
     const d = JSON.parse(localStorage.getItem(k) || 'null');
     if (d && typeof d.v === 'string' && d.base === base && d.v !== base){
@@ -395,16 +410,17 @@ function keepDraft(el, key){
         setTimeout(() => toast('刚才没写完的,帮你留着了 ✎'), 500);
     }
   } catch { localStorage.removeItem(k); }
-  const save = () => {
-    if (el.value === base) localStorage.removeItem(k);
-    else localStorage.setItem(k, JSON.stringify({ v: el.value, base, at: Date.now() }));
-  };
-  el.addEventListener('input', save);
-  el.addEventListener('blur', save);
-  document.addEventListener('visibilitychange', save);
-  window.addEventListener('pagehide', save);
+  el.addEventListener('input', () => {
+    const r = draftReg.get(key); if (r) r.off = false;   // 重新打字 = 这是新内容,恢复保护
+    saveOneDraft(key);
+  });
+  el.addEventListener('blur', () => saveOneDraft(key));
 }
-function clearDraft(key){ localStorage.removeItem('garden-draft:' + key); }
+/* 清掉草稿,并且在用户重新打字之前,不再写回 */
+function clearDraft(key){
+  localStorage.removeItem('garden-draft:' + key);
+  const r = draftReg.get(key); if (r) r.off = true;
+}
 
 /* ===== 待办:零散待办 与 项目内待办 共用一套逻辑 =====
    project_id 为空 = 零散待办;due 为空 = 无期限,永远不会主动催你 */
@@ -1714,8 +1730,12 @@ async function openProject(id){
     <div class="row" style="margin-top:22px;border-top:1px solid var(--line);padding-top:14px">
       <button data-pnext>改下一步</button>
       ${p.status==='growing' ? '<button data-pfin>收进已完成</button>' : '<button data-preopen>重新打开</button>'}
+      ${p.status==='released' ? '' : '<button class="ghost" data-prelease style="font-size:12.5px">🍂 放下</button>'}
     </div>
     ${p.next_step ? `<div class="muted" style="margin-top:8px">下一步:${esc(p.next_step)}</div>` : ''}
+    <div style="margin-top:18px;text-align:right">
+      <button class="ghost" data-pdel style="font-size:11.5px;color:var(--mute);opacity:.75">删除这个项目</button>
+    </div>
    </div></div>`);
   const mask = document.querySelector('.modal-mask');
   mask.addEventListener('click', ev => { if (ev.target === mask) closeModal(true); });
@@ -1852,6 +1872,26 @@ async function openProject(id){
   if (reo) reo.onclick = async () => {
     await q(sb.from('projects').update({ status:'growing', updated_at: new Date().toISOString() }).eq('id', id));
     openProject(id);
+  };
+  /* 放下:不删任何东西,只是从主线里收起来。随时能「重新打开」 */
+  const rel = mask.querySelector('[data-prelease]');
+  if (rel) rel.onclick = async () => {
+    await q(sb.from('projects').update({ status:'released', updated_at: new Date().toISOString() }).eq('id', id));
+    toast('放下了。放下也是一种完成 🍂'); openProject(id);
+  };
+  /* 删除:真删,而且会连带子任务和记录(数据库设的级联)。
+     所以摩擦按内容多少来给 —— 空项目一次确认,有东西的问两次。 */
+  mask.querySelector('[data-pdel]').onclick = async () => {
+    const nT = (tasks||[]).length, nU = (visibleUps||[]).length;
+    const what = [nT?`${nT} 个待办`:'', nU?`${nU} 条记录`:''].filter(Boolean).join(' 和 ');
+    if (!confirm(
+      `删除「${p.name}」？\n\n` +
+      (what ? `连同 ${what} 一起消失,不能撤销。\n\n` : '不能撤销。\n\n') +
+      `如果只是想从列表收起来,请取消,然后点「🍂 放下」。`
+    )) return;
+    if ((nT + nU) > 0 && !confirm('真的删掉？\n这些记录也会从「今天完成的」历史里一起消失。')) return;
+    await q(sb.from('projects').delete().eq('id', id));
+    closeModal(false); toast('删掉了'); VIEWS.projects();
   };
 }
 
@@ -2027,10 +2067,46 @@ VIEWS.lang = async function(){
   document.querySelectorAll('[data-word]').forEach(el => el.onclick = () => openWord(el.dataset.word));
   // 手动加(不查AI)
   ['en','ja'].forEach(l => keepDraft($('#add-'+l), 'lookup-'+l));   // 查到一半切走,词还在
+  /* 查词结果也留着 ——
+     「查过了」不算表态:可能是你想收,只是还没来得及点。
+     所以只有你明确表过态(收进温室 / 不收了 / 手动加)才清掉,
+     中途被打断的,刷新回来卡片还在,不用再花一次额度重查。 */
+  const LK_TTL = 7*86400000;
+  const lkGet = lang => { try {
+      const d = JSON.parse(localStorage.getItem('garden-lookup:'+lang) || 'null');
+      return (d && d.card && Date.now() - (d.at||0) < LK_TTL) ? d : null;
+    } catch { return null; } };
+  const lkPut  = (lang, expr, card) =>
+    localStorage.setItem('garden-lookup:'+lang, JSON.stringify({ expr, card, at: Date.now() }));
+  const lkDrop = lang => localStorage.removeItem('garden-lookup:'+lang);
+
+  const showLookup = (lang, expr, c, restored) => {
+    const box = $('#look-'+lang); if (!box) return;
+    box.classList.remove('hidden');
+    box.innerHTML = `${restored?'<div class="muted" style="font-size:12px;margin-bottom:6px">上次查了还没处理的</div>':''}
+      <div class="exp" style="font-size:16px">${esc(c.expression||expr)} <span class="muted" style="font-weight:400">${esc([c.pron,c.pos].filter(Boolean).join(' '))}</span></div>
+      <div style="margin:6px 0">${esc(c.meaning||'')}</div>
+      ${c.example?`<div class="muted" style="font-size:13px">例：${esc(c.example)}${c.example_cn?'<br>'+esc(c.example_cn):''}</div>`:''}
+      ${c.note?`<div class="muted" style="font-size:12.5px;margin-top:6px">💡 ${esc(c.note)}</div>`:''}
+      <div class="row" style="margin-top:10px"><button class="primary" id="save-${lang}">收进温室</button><button class="ghost" id="close-${lang}">不收了</button></div>`;
+    const settle = () => {           // 表过态了:框和卡片一起收干净
+      lkDrop(lang); clearDraft('lookup-'+lang);
+      const inp = $('#add-'+lang); if (inp) inp.value = '';
+      box.classList.add('hidden'); box.innerHTML = '';
+    };
+    $('#save-'+lang).onclick = async () => { await saveCard(lang, c); settle(); toast('收进温室了 🌱'); route(); };
+    $('#close-'+lang).onclick = settle;
+  };
+  // 刷新 / 切回来:把上次没处理完的那张卡恢复出来
+  ['en','ja'].forEach(l => {
+    const d = lkGet(l); if (!d) return;
+    const inp = $('#add-'+l); if (inp && !inp.value) inp.value = d.expr || '';
+    showLookup(l, d.expr, d.card, true);
+  });
   document.querySelectorAll('[data-manual]').forEach(b => b.onclick = async () => {
     const lang = b.dataset.manual;
     const exp = $('#add-'+lang).value.trim(); if (!exp) return toast('先输入一个词');
-    clearDraft('lookup-'+lang);
+    clearDraft('lookup-'+lang); lkDrop(lang);
     const m = prompt('意思(可留空,之后可 AI 补):', ''); if (m === null) return;
     await q(sb.from('lang_items').insert({ lang, expression: exp, meaning: m || null, source:'manual' }));
     await bumpCheckin(lang, 1); toast('收进温室了 🌱'); route();
@@ -2047,14 +2123,8 @@ VIEWS.lang = async function(){
       const { data, error } = await sb.functions.invoke('garden-ai', { body: { mode:'lookup', expression: expr, lang, direction: dir } });
       if (error) throw new Error((await error.context?.json?.())?.error || error.message);
       if (data?.error) throw new Error(data.error);
-      const c = data.card;
-      box.innerHTML = `<div class="exp" style="font-size:16px">${esc(c.expression||expr)} <span class="muted" style="font-weight:400">${esc([c.pron,c.pos].filter(Boolean).join(' '))}</span></div>
-        <div style="margin:6px 0">${esc(c.meaning||'')}</div>
-        ${c.example?`<div class="muted" style="font-size:13px">例：${esc(c.example)}${c.example_cn?'<br>'+esc(c.example_cn):''}</div>`:''}
-        ${c.note?`<div class="muted" style="font-size:12.5px;margin-top:6px">💡 ${esc(c.note)}</div>`:''}
-        <div class="row" style="margin-top:10px"><button class="primary" id="save-${lang}">收进温室</button><button class="ghost" id="close-${lang}">不收了</button></div>`;
-      $('#save-'+lang).onclick = async () => { await saveCard(lang, c); toast('收进温室了 🌱'); route(); };
-      $('#close-'+lang).onclick = () => { box.classList.add('hidden'); box.innerHTML=''; };
+      lkPut(lang, expr, data.card);
+      showLookup(lang, expr, data.card);
     } catch (e) {
       box.textContent = '查词失败：' + e.message;
     }
