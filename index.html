@@ -476,16 +476,49 @@ const canGraduate = (streak, firstAt) =>
 
 /* AI 查词时把读音拼进了 meaning 里,复习时要把它拆出来藏到背面 ——
    正面看到 /ˌserənˈdɪpəti/ 或「こもれび」,就等于看到答案了 */
+/* 把读音从释义里剥干净 —— 正面(中文那一面)一个字的读音都不能漏,
+   否则偷瞄一眼就没有练习效果了。
+   注意:就算 i.pron 已经有值,释义里也可能又抄了一遍,所以照样要剥。 */
 function splitPron(i){
-  const m = String(i.meaning || '').trim();
-  if (i.pron) return { pron: i.pron, rest: m };
-  let hit = m.match(/^\/[^/]{1,48}\/\s*/);                                  // 英语:开头的 /音标/
-  if (!hit) hit = m.match(/^[ぁ-んァ-ヶーゝゞ・･\s]{1,28}(?=[一-鿿a-zA-Z(（])/); // 日语:开头的一串假名
-  if (hit && hit[0].trim()){
-    const rest = m.slice(hit[0].length).trim();
-    if (rest) return { pron: hit[0].trim(), rest };     // 拆完还有东西才算数
+  const raw = String(i.meaning || '').trim();
+  if (!raw) return { pron: i.pron || '', rest: '' };
+  const found = [];
+  const hasHan  = s => /[一-鿿]/.test(s);                       // 含汉字 = 是释义,不是读音
+  const kanaOnly= s => /^[ぁ-んァ-ヶーゝゞ・･\s]+$/.test(s);
+  const ipaLike = s => /[ˈˌːəɪʊɔæθðʃʒŋɜɑɒʌ]/.test(s);
+  let m = raw;
+
+  // ① /音标/ —— 任意位置
+  m = m.replace(/\/[^/]{1,60}\//g, s => { found.push(s); return ' '; });
+  // ② [xxx] —— 里面没汉字才当读音
+  m = m.replace(/\[([^\]]{1,60})\]/g, (s, inner) =>
+    hasHan(inner) ? s : (found.push(inner.trim()), ' '));
+  // ③ (xxx)（xxx） —— 纯假名 / 带音标符号 / 日语条目里的纯罗马字
+  m = m.replace(/[（(]([^）)]{1,60})[）)]/g, (s, inner) => {
+    const t = inner.trim();
+    const romaji = i.lang === 'ja' && /^[A-Za-zÀ-ɏ'’\-\s]+$/.test(t);
+    return (kanaOnly(t) || ipaLike(t) || romaji) ? (found.push(t), ' ') : s;
+  });
+  // ④ 开头的一串假名
+  const lead = m.match(/^[ぁ-んァ-ヶーゝゞ・･\s]{1,28}(?=[一-鿿a-zA-Z])/);
+  if (lead){ found.push(lead[0].trim()); m = m.slice(lead[0].length); }
+  // ⑤ 结尾的一串假名(前面还剩着汉字才算,免得把日语释义本身剃了)
+  const tail = m.match(/[ぁ-んァ-ヶーゝゞ・･]{2,28}[\s。.]*$/);
+  if (tail && hasHan(m.slice(0, m.length - tail[0].length))){
+    found.push(tail[0].trim()); m = m.slice(0, m.length - tail[0].length);
   }
-  return { pron:'', rest:m };
+  // ⑥ 兜底:释义里直接出现了这个词本身,一样是泄题
+  const exp = String(i.expression || '').trim();
+  if (exp.length >= 2)
+    m = m.replace(new RegExp(exp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' ');
+  if (i.pron && i.pron.trim().length >= 2)
+    m = m.split(i.pron.trim()).join(' ');
+
+  const rest = m.replace(/\s{2,}/g, ' ')
+                .replace(/^[\s,，、:：;；·・\-–—]+|[\s,，、:：;；·・\-–—]+$/g, '').trim();
+  const pron = (i.pron || found.filter(Boolean).join(' ')).trim();
+  if (!rest) return { pron: i.pron || '', rest: raw };   // 全剥没了就退回原文,别让正面空掉
+  return { pron, rest };
 }
 
 /* 毕业考:给 GPT Live 的提示词(目标词绝不外露给自己看之外的提示) */
@@ -939,7 +972,10 @@ VIEWS.today = async function(){
   // 手动添加的临时事项(当天有效),排在最前
   const manual = (acts.manual || []).map(m => ({ t:'我加的', title:m.title, sub:'', st:'growing', go:'', gid:'', sid:m.sid, manual:true }));
   // 顺序:我加的 → 临期待办 → 项目/种子/语言(剩多少位置端多少)
-  const soft = (todo||[]).filter(x => !x.manual && !/^(task|note)-/.test(String(x.sid||'')));
+  // 同一个项目已经有临期待办在台面上了,就别再端一张项目卡 —— 否则同一件事出现两次
+  const urgentPids = new Set(urgent.map(u => u.pid).filter(Boolean));
+  const soft = (todo||[]).filter(x => !x.manual && !/^(task|note)-/.test(String(x.sid||''))
+    && !(x.go === 'proj' && urgentPids.has(x.gid)));
   // 位置只被「还没做的」占用,已完成的不挤掉推荐
   const undoneN = manual.filter(m=>!doneToday.includes(m.sid)).length + urgent.filter(u=>!taskDone.has(u.sid)).length;
   const room = Math.max(0, energyNeed - undoneN);
