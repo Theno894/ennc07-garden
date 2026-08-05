@@ -460,6 +460,7 @@ async function addTodoRow(title, due, pid){
    ⚠️ 间隔用 success_streak,不能用 lifetime_review_count —— 后者只增不减,
       失败多次的词会算出天文数字的间隔,从队列里静默消失 */
 const EXAM_STREAK = 3, EXAM_SPAN_DAYS = 8;
+const DAILY_REVIEW = 6;   // 每天端一批的大小(到期的可能有几十个,一次全端会劝退)
 const streakOf  = i => (i.success_streak ?? i.review_count ?? 0);
 /* 刚收进来的新词不算「今天到期」—— 你几秒钟前才看过它的释义,
    现在考等于没考,而且会把「语言复习」从已完成里翻回来。满 24 小时后才进队列。 */
@@ -473,6 +474,55 @@ const flashDue  = i => inFlashcards(i) && langDue(i);
 const canGraduate = (streak, firstAt) =>
   streak >= EXAM_STREAK && !!firstAt &&
   (Date.now() - new Date(firstAt).getTime()) >= EXAM_SPAN_DAYS * 86400000;
+
+/* ——— 生长阶段:连对次数 → 一个看得见的段位 ——— */
+const LEVELS = [
+  { k:'seed',   ic:'🌰', name:'种子' },
+  { k:'sprout', ic:'🌱', name:'发芽' },
+  { k:'leaf',   ic:'🌿', name:'抽叶' },
+  { k:'almost', ic:'🌾', name:'快长成' },
+  { k:'exam',   ic:'🎓', name:'待毕业考' },
+  { k:'grown',  ic:'🌳', name:'已长成' },
+  { k:'rest',   ic:'🍂', name:'已放下' },
+];
+const LV = Object.fromEntries(LEVELS.map(l => [l.k, l]));
+function levelOf(i){
+  if (i.mastered || i.status === 'mastered') return LV.grown;
+  if (i.status === 'suspended')              return LV.rest;
+  if (i.status === 'exam_ready')             return LV.exam;
+  const s = streakOf(i);
+  return s >= 3 ? LV.almost : [LV.seed, LV.sprout, LV.leaf][s];
+}
+/* 下次什么时候再见它 */
+function nextSee(i){
+  if (i.mastered || i.status === 'mastered') return '';
+  if (i.status === 'exam_ready')             return '等毕业考';
+  if (i.status === 'suspended')              return '';
+  const base = i.last_reviewed_at ? new Date(i.last_reviewed_at).getTime() + Math.pow(2, streakOf(i)) * 86400000
+                                  : new Date(i.created_at || 0).getTime() + 86400000;
+  const d = Math.ceil((base - Date.now()) / 86400000);
+  return d <= 0 ? '今天该见了' : d === 1 ? '明天见' : `${d} 天后`;
+}
+/* ——— 朗读:用浏览器自带的合成语音,不花任何额度 ——— */
+function speak(text, lang){
+  const t = String(text || '').trim(); if (!t) return;
+  if (!window.speechSynthesis) return toast('这个浏览器不支持朗读');
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(t.slice(0, 300));
+    u.lang = lang === 'ja' ? 'ja-JP' : 'en-US';
+    u.rate = 0.9;
+    window.speechSynthesis.speak(u);
+  } catch { toast('朗读失败了'); }
+}
+const spkBtn = (text, lang, size) =>
+  `<button class="ghost" data-speak="${esc(text)}" data-slang="${lang}" title="听发音"
+     style="font-size:${size||15}px;padding:0 6px;line-height:1.2">🔊</button>`;
+function bindSpeak(root){
+  (root || document).querySelectorAll('[data-speak]').forEach(b => b.onclick = ev => {
+    ev.stopPropagation(); speak(b.dataset.speak, b.dataset.slang);
+  });
+}
 
 /* AI 查词时把读音拼进了 meaning 里,复习时要把它拆出来藏到背面 ——
    正面看到 /ˌserənˈdɪpəti/ 或「こもれび」,就等于看到答案了 */
@@ -488,8 +538,14 @@ function splitPron(i){
   const ipaLike = s => /[ˈˌːəɪʊɔæθðʃʒŋɜɑɒʌ]/.test(s);
   let m = raw;
 
-  // ① /音标/ —— 任意位置
-  m = m.replace(/\/[^/]{1,60}\//g, s => { found.push(s); return ' '; });
+  // ① /音标/ —— 长句转写可以很长,所以不设短上限;
+  //    但要防止把「整体面貌/全局结构」这种并列斜杠当成音标:里面有汉字就放过,
+  //    只有「在最开头」或「带音标符号」才算读音。
+  m = m.replace(/\/([^/\n]{1,400})\//g, (s, inner, off) => {
+    if (hasHan(inner)) return s;
+    if (off === 0 || ipaLike(inner)){ found.push(s); return ' '; }
+    return s;
+  });
   // ② [xxx] —— 里面没汉字才当读音
   m = m.replace(/\[([^\]]{1,60})\]/g, (s, inner) =>
     hasHan(inner) ? s : (found.push(inner.trim()), ' '));
@@ -513,6 +569,10 @@ function splitPron(i){
     m = m.replace(new RegExp(exp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' ');
   if (i.pron && i.pron.trim().length >= 2)
     m = m.split(i.pron.trim()).join(' ');
+  // ⑦ 词性标记(phrase / n. / v. …)对「想一想怎么说」没有帮助,前后都剃掉
+  const POS = '(?:phrase|phr|idiom|expression|n|v|vt|vi|adj|adv|prep|conj|interj|int|pron|abbr|aux)\\.?';
+  m = m.replace(new RegExp('^\\s*' + POS + '\\s+', 'i'), '');
+  m = m.replace(new RegExp('\\s+' + POS + '\\s*$', 'i'), '');
 
   const rest = m.replace(/\s{2,}/g, ' ')
                 .replace(/^[\s,，、:：;；·・\-–—]+|[\s,，、:：;；·・\-–—]+$/g, '').trim();
@@ -749,7 +809,7 @@ function tiePos(i, cell){                      // 第 i 个字在雪碧图里的
   const s = cell / TIE_CELL;
   return `background-size:${TIE_COLS*TIE_CELL*s}px ${Math.ceil(TIE_TEXT.length/TIE_COLS)*TIE_CELL*s}px;background-position:${-c*cell}px ${-r*cell}px`;
 }
-const langUI = { libOpen:false, q:'', filter:'全部', sort:'recent' };  // 词库 UI 状态(跨渲染保留)
+const langUI = { libOpen:false, q:'', filter:'全部', sort:'recent', level:'', revLang:'' };  // 词库 UI 状态(跨渲染保留)
 let growView = 'list';  // 生长页:列表 or 星图
 let gratHistOpen = false;  // 感恩日记:过往是否展开
 let gratExtra = 0;         // 感恩日记:额外加了几栏
@@ -1344,7 +1404,7 @@ async function startReviewQueue(startId){
   const due = items.filter(flashDue);
   if (!due.length){ toast('今天没有要复习的词'); return; }
   if (startId){ const k = due.findIndex(x => x.id === startId); if (k > 0){ const [it] = due.splice(k,1); due.unshift(it); } }
-  startReview(due);
+  startReview(due.slice(0, DAILY_REVIEW));   // 和语言页显示的批次一致,别一进去就是十几张
 }
 
 /* ================= 捕捉 ================= */
@@ -2019,7 +2079,13 @@ VIEWS.lang = async function(){
     q(sb.from('ai_insights').select('*').eq('scope','lang_monthly').order('date',{ascending:false}).limit(1)),
     q(sb.from('lang_candidates').select('*').eq('handled',false).order('created_at',{ascending:false}), true),
   ]);
-  const due = (items||[]).filter(flashDue).slice(0,6);
+  // 到期的可能很多(83 个词刚建完时会一起到期),所以每天只端一批;
+  // 但计数必须说实话 —— 以前这里 slice 完直接当总数显示,复习完又冒出 6 个。
+  const dueAllRaw = (items||[]).filter(flashDue);
+  const dueAll  = langUI.revLang ? dueAllRaw.filter(i => i.lang === langUI.revLang) : dueAllRaw;
+  const due     = dueAll.slice(0, DAILY_REVIEW);
+  const dueMore = Math.max(0, dueAll.length - due.length);
+  const revEN = dueAllRaw.filter(i=>i.lang==='en').length, revJA = dueAllRaw.filter(i=>i.lang==='ja').length;
   const mastered = (items||[]).filter(i => i.mastered || i.status==='mastered');
   const totalN = (items||[]).length;
   // —— 毕业考场 ——
@@ -2052,7 +2118,7 @@ VIEWS.lang = async function(){
     <div class="row" style="gap:24px;margin:2px 0 24px">
       <span class="muted"><b style="color:var(--ink);font-size:19px">${totalN}</b> 个词</span>
       <span class="muted"><b style="color:var(--done);font-size:19px">${mastered.length}</b> 已长成</span>
-      <span class="muted"><b style="color:var(--grow);font-size:19px">${due.length}</b> 待复习</span>
+      <span class="muted"><b style="color:var(--grow);font-size:19px">${due.length}</b> 待复习${dueMore?`<span style="font-size:12px"> · 后面还排着 ${dueMore}</span>`:''}</span>
       ${examReady.length?`<span class="muted"><b style="color:var(--yellow,#b98b1a);font-size:19px">${examReady.length}</b> 待毕业考</span>`:''}
     </div>
     ${examReady.length ? `
@@ -2115,12 +2181,16 @@ VIEWS.lang = async function(){
       ${cands.length>12?`<div class="muted" style="font-size:12px;margin-top:8px">还有 ${cands.length-12} 个,处理完这批再看</div>`:''}
     </div>` : ''}
     <div class="grid g2">${col('en')}${col('ja')}</div>
-    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">${due.length ? `今天有 ${due.length} 个词在静静想你` : '今天没有词在等你,温室很安静'}</h2>
+    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">${due.length ? `今天有 ${due.length} 个词在静静想你${dueMore?`　<span class="muted" style="font-size:13px;font-weight:400">后面还排着 ${dueMore} 个,不急</span>`:''}` : (langUI.revLang ? `这个语言今天没有到期的词` : '今天没有词在等你,温室很安静')}</h2>
       ${due.length ? '<button class="primary" id="focus-review">▶ 一个个见它们</button>' : ''}</div>
+    ${(revEN && revJA) ? `<div class="row" style="margin:-6px 0 14px;gap:8px">
+      ${[['','两种都练',revEN+revJA],['en','只练英语',revEN],['ja','只练日语',revJA]]
+        .map(([v,label,n]) => `<span class="chip click ${langUI.revLang===v?'sel':''}" data-revlang="${v}">${label} ${n}</span>`).join('')}
+    </div>` : ''}
     <div class="grid g2">
       ${due.map(i=>`<div class="card projcard" data-word="${i.id}">
-        <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">连对 ${streakOf(i)}/${EXAM_STREAK}</span></div>
-        <h3>${esc(i.expression)}</h3>
+        <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}</span><span class="muted">${levelOf(i).ic} ${levelOf(i).name} · 连对 ${streakOf(i)}/${EXAM_STREAK}</span></div>
+        <h3>${esc(i.expression)} ${spkBtn(i.expression, i.lang, 16)}</h3>
         <div class="tool-hint muted">点开复习 →</div>
       </div>`).join('') || '<div class="dashed" style="padding:20px;text-align:center"><div class="muted">词们都睡着了,明天再来看看 🌙</div></div>'}
     </div>
@@ -2130,11 +2200,19 @@ VIEWS.lang = async function(){
       <button id="lib-toggle">${langUI.libOpen?'收起 ▲':'展开 ▼'}</button></div>
     <div id="lib-wrap" class="${langUI.libOpen?'':'hidden'}"><div class="card">
       <input class="small-in" id="lib-q" placeholder="搜索词或释义…" value="${esc(langUI.q)}" style="width:100%;margin-bottom:12px">
-      <div class="row" style="margin-bottom:12px">
+      <div class="row" style="margin-bottom:8px">
         ${['全部','英语','日语','待复习','已长成'].map(f=>`<span class="chip click ${langUI.filter===f?'sel':''}" data-lf="${f}">${f}</span>`).join('')}
         <select id="lib-sort" class="small-in" style="max-width:130px;margin-left:auto">
           <option value="recent">最近收的</option><option value="stale">最久没复习</option><option value="alpha">字母序</option>
         </select>
+      </div>
+      <div class="row" style="margin-bottom:12px;gap:6px;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">阶段</span>
+        ${LEVELS.map(l=>{
+          const n = (items||[]).filter(x=>levelOf(x).k===l.k).length;
+          return n ? `<span class="chip click ${langUI.level===l.k?'sel':''}" data-lv="${l.k}" style="font-size:12px">${l.ic} ${l.name} ${n}</span>` : '';
+        }).join('')}
+        ${langUI.level?`<span class="chip click" data-lv="" style="font-size:12px;color:var(--mute)">× 清除</span>`:''}
       </div>
       <div id="lib-list"></div>
     </div></div>
@@ -2146,21 +2224,37 @@ VIEWS.lang = async function(){
     const f = langUI.filter;
     if (f==='英语') list = list.filter(i=>i.lang==='en');
     else if (f==='日语') list = list.filter(i=>i.lang==='ja');
-    else if (f==='待复习') list = list.filter(i=> due.some(d=>d.id===i.id));
+    else if (f==='待复习') list = list.filter(i=> dueAll.some(d=>d.id===i.id));   // 筛选看全部到期,不只今天这批
     else if (f==='已长成') list = list.filter(i=>i.mastered);
+    if (langUI.level) list = list.filter(i => levelOf(i).k === langUI.level);   // 阶段筛选,和上面那排可以叠加
     const query = langUI.q.trim().toLowerCase();
     if (query) list = list.filter(i=> (i.expression||'').toLowerCase().includes(query) || (i.meaning||'').toLowerCase().includes(query));
     if (langUI.sort==='alpha') list.sort((a,b)=>(a.expression||'').localeCompare(b.expression||''));
     else if (langUI.sort==='stale') list.sort((a,b)=> new Date(a.last_reviewed_at||0) - new Date(b.last_reviewed_at||0));
     else list.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
     const el = $('#lib-list'); if (!el) return;
-    el.innerHTML = list.map(i=>`<div class="itemline click" data-word="${i.id}"><div><div class="exp">${esc(i.expression)} <span class="muted" style="font-size:11px">${i.lang==='en'?'EN':'JA'}${i.mastered?' · 已长成':''}</span></div><div class="muted">${esc((i.meaning||'').slice(0,50))}</div></div><span class="muted">›</span></div>`).join('') || '<div class="muted" style="padding:8px 0">没有匹配的词。</div>';
+    el.innerHTML = list.map(i=>{ const lv = levelOf(i), ns = nextSee(i);
+      return `<div class="itemline click" data-word="${i.id}">
+        <span style="flex:0 0 auto;font-size:15px;margin-right:8px" title="${lv.name}">${lv.ic}</span>
+        <div style="flex:1;min-width:0">
+          <div class="exp">${esc(i.expression)} <span class="muted" style="font-size:11px">${i.lang==='en'?'EN':'JA'} · ${lv.name}${ns?' · '+ns:''}</span></div>
+          <div class="muted">${esc((i.meaning||'').slice(0,50))}</div>
+        </div>
+        <span style="flex:0 0 auto">${spkBtn(i.expression, i.lang, 14)}</span>
+        <span class="muted" style="flex:0 0 auto">›</span></div>`;
+    }).join('') || '<div class="muted" style="padding:8px 0">没有匹配的词。</div>';
+    bindSpeak(el);
     el.querySelectorAll('[data-word]').forEach(x => x.onclick = () => openWord(x.dataset.word));
   };
   $('#lib-sort') && ($('#lib-sort').value = langUI.sort);
   $('#lib-toggle') && ($('#lib-toggle').onclick = () => { langUI.libOpen = !langUI.libOpen; $('#lib-wrap').classList.toggle('hidden', !langUI.libOpen); $('#lib-toggle').textContent = langUI.libOpen?'收起 ▲':'展开 ▼'; if (langUI.libOpen) renderLib(); });
   $('#lib-q') && ($('#lib-q').oninput = e => { langUI.q = e.target.value; renderLib(); });
   document.querySelectorAll('[data-lf]').forEach(c => c.onclick = () => { langUI.filter = c.dataset.lf; document.querySelectorAll('[data-lf]').forEach(x=>x.classList.toggle('sel', x===c)); renderLib(); });
+  document.querySelectorAll('[data-lv]').forEach(c => c.onclick = () => {   // 再点一次同一个 = 取消
+    langUI.level = (langUI.level === c.dataset.lv) ? '' : c.dataset.lv; VIEWS.lang();
+  });
+  document.querySelectorAll('[data-revlang]').forEach(c => c.onclick = () => { langUI.revLang = c.dataset.revlang; VIEWS.lang(); });
+  bindSpeak();
   $('#lib-sort') && ($('#lib-sort').onchange = e => { langUI.sort = e.target.value; renderLib(); });
   if (langUI.libOpen) renderLib();
   // 方向切换
@@ -2303,11 +2397,11 @@ async function openWord(id){
   closeModal(false);
   document.body.insertAdjacentHTML('beforeend', `
    <div class="modal-mask"><div class="modal" style="max-width:520px">
-    <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'}${i.mastered?' · 已长成':''}</span><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
-    <h2>${esc(i.expression)}</h2>
+    <div class="spread"><span class="chip">${i.lang==='en'?'英语':'日语'} · ${levelOf(i).ic} ${levelOf(i).name}</span><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
+    <h2>${esc(i.expression)} ${spkBtn(i.expression, i.lang, 19)}</h2>
     <div style="margin:8px 0">${esc(i.meaning||'(还没有释义，点「AI 重查」补上)')}</div>
-    ${i.example?`<div class="muted" style="font-size:13.5px">${esc(i.example)}</div>`:''}
-    <div class="muted" style="font-size:12px;margin-top:8px">连对 ${streakOf(i)}/${EXAM_STREAK} · 一共学过 ${i.lifetime_review_count ?? i.review_count ?? 0} 次${
+    ${i.example?`<div class="muted" style="font-size:13.5px">${esc(i.example)} ${spkBtn(i.example, i.lang, 13)}</div>`:''}
+    <div class="muted" style="font-size:12px;margin-top:8px">${nextSee(i)?nextSee(i)+' · ':''}连对 ${streakOf(i)}/${EXAM_STREAK} · 一共学过 ${i.lifetime_review_count ?? i.review_count ?? 0} 次${
       (i.exam_fail_count||0)?` · 毕业考挂过 ${i.exam_fail_count} 次`:''}${
       i.status==='exam_ready'?' · 🎓 等着毕业考':i.status==='suspended'?' · 🍂 已放下':''}</div>
     <div class="row" style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
@@ -2324,6 +2418,7 @@ async function openWord(id){
   const mask = document.querySelector('.modal-mask');
   mask.addEventListener('click', ev => { if (ev.target === mask) closeModal(true); });
   mask.querySelector('[data-mclose]').onclick = () => closeModal(true);
+  bindSpeak(mask);
   mask.querySelectorAll('[data-wr]').forEach(b => b.onclick = async () => {
     if (b.dataset.wr === 'mastered') celebrate(b, ['🌿','✦','✧','✦']);
     await srsMark(i, b.dataset.wr);
@@ -2392,9 +2487,9 @@ function startReview(list){
         <div class="muted" style="font-size:13px;margin-bottom:4px">想一想 —— 用${zh}怎么说?</div>
         <div id="rev-mean" class="hidden">
           <div class="wave"></div>
-          <div style="font-size:26px;font-weight:600;margin:2px 0 2px">${esc(i.expression)}</div>
+          <div style="font-size:26px;font-weight:600;margin:2px 0 2px">${esc(i.expression)} ${spkBtn(i.expression, i.lang, 20)}</div>
           ${pron ? `<div class="muted" style="font-size:14px;margin-bottom:6px">${esc(pron)}</div>` : '<div style="height:4px"></div>'}
-          ${i.example ? `<div class="muted" style="font-size:13px">${esc(i.example)}</div>` : ''}
+          ${i.example ? `<div class="muted" style="font-size:13px">${esc(i.example)} ${spkBtn(i.example, i.lang, 13)}</div>` : ''}
         </div>`
       : `
         <h2 style="margin:28px 0 4px;font-size:26px">${esc(i.expression)}</h2>
@@ -2415,7 +2510,10 @@ function startReview(list){
     mask.querySelector('#rev-flip').onclick = (ev) => {
       mask.querySelector('#rev-mean').classList.remove('hidden');
       ev.currentTarget.style.display = 'none';        // 翻过了就把按钮收掉
+      bindSpeak(mask);                                 // 翻面后才有朗读按钮
+      speak(i.expression, i.lang);                     // 翻面自动读一遍
     };
+    bindSpeak(mask);
     mask.querySelector('[data-end]').onclick = () => { mask.remove(); toast('今天复习就到这 🌿'); route(); };
     mask.querySelectorAll('[data-r]').forEach(b => b.onclick = async () => { await srsMark(i, b.dataset.r); idx++; render(); });
   };
