@@ -250,7 +250,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-06f</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-07a</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
@@ -692,14 +692,38 @@ async function applyReport(r){
   return p;
 }
 /* ——— 朗读:用浏览器自带的合成语音,不花任何额度 ——— */
+/* 系统默认挑的往往是「精简版」音色 —— 就是那个听起来嘶哑发紧的。
+   同一台设备上通常还躺着更好的音色,只是没被选中。这里手动挑一个。
+   （iPhone 想要最好的:设置 → 辅助功能 → 朗读内容 → 声音 → 下载「增强」或「高级」版） */
+let _voices = [];
+const loadVoices = () => { try { _voices = window.speechSynthesis.getVoices() || []; } catch { _voices = []; } };
+if (window.speechSynthesis){
+  loadVoices();
+  window.speechSynthesis.onvoiceschanged = loadVoices;   // Safari 是异步加载的,要等这个事件
+}
+function pickVoice(tts){
+  if (!_voices.length) loadVoices();
+  const norm = s => String(s||'').replace('_','-').toLowerCase();
+  const base = norm(tts).split('-')[0];
+  const cands = _voices.filter(v => norm(v.lang).startsWith(base));
+  if (!cands.length) return null;
+  const score = v =>
+      (/enhanced|premium|neural|siri|natural/i.test(v.name) ? 4 : 0)   // 明确的高质量音色
+    + (v.localService === false ? 2 : 0)                                // 网络音色通常比本地精简版好
+    + (/compact|eloquence|espeak/i.test(v.name) ? -5 : 0)               // 精简版:就是它在嘶哑
+    + (norm(v.lang) === norm(tts) ? 1 : 0);                             // 地区码完全对上
+  return cands.slice().sort((a, b) => score(b) - score(a))[0];
+}
 function speak(text, lang){
   const t = String(text || '').trim(); if (!t) return;
   if (!window.speechSynthesis) return toast('这个浏览器不支持朗读');
   try {
     window.speechSynthesis.cancel();
+    const tts = LZ[lang]?.tts || 'en-US';
     const u = new SpeechSynthesisUtterance(t.slice(0, 300));
-    u.lang = LZ[lang]?.tts || 'en-US';
-    u.rate = 0.9;
+    u.lang = tts;
+    const v = pickVoice(tts); if (v) u.voice = v;
+    u.rate = 0.95; u.pitch = 1;      // 0.9 会让精简音色更闷,拉回接近自然语速
     window.speechSynthesis.speak(u);
   } catch { toast('朗读失败了'); }
 }
@@ -2779,14 +2803,14 @@ function openImportModal(){
 }
 /* ⚠️ 陷阱卡:和词卡不一样 —— 你不是要「背住」这个错,
    是要在下次说话前拦住自己。所以背面摆的是「你上次说错的原句」。 */
-function renderTrap(e, idx, total, next){
+function renderTrap(e, idx, total, next, back){
   const zh  = langZh(e.lang);
   const last = (e.samples||[]).slice(-1)[0]?.original || '';
   const front = e.zh || e.tag;
   document.body.insertAdjacentHTML('beforeend', `
    <div class="modal-mask"><div class="modal" style="max-width:520px;text-align:center">
     <div class="spread"><span class="chip">⚠️ 陷阱 · ${zh}</span>
-      <div class="row" style="gap:10px"><span class="muted">${idx+1} / ${total}</span>
+      <div class="row" style="gap:10px">${back?'<button class="ghost" data-undo style="font-size:12px">↩ 改上一张</button>':''}<span class="muted">${idx+1} / ${total}</span>
       <button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
     <div class="muted" style="font-size:12px;margin-top:14px">你犯过 ${e.hits} 次 · ${esc(e.tag)}</div>
     <h2 style="margin:8px 0 4px;font-size:22px;line-height:1.4">${esc(front)}</h2>
@@ -2812,6 +2836,7 @@ function renderTrap(e, idx, total, next){
     bindSpeak(m);                                    // 同上:要听自己点 🔊
   };
   m.querySelector('[data-end]').onclick = () => { m.remove(); toast('今天复习就到这 🌿'); route(); };
+  m.querySelector('[data-undo]') && (m.querySelector('[data-undo]').onclick = back);
   m.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
     const ok = b.dataset.t === 'right';
     await q(sb.from('lang_errors').update({
@@ -2824,18 +2849,35 @@ function renderTrap(e, idx, total, next){
 }
 function startReview(list){
   let idx = 0;
+  /* 选错了要能改回来 —— 打分前先把这条的原样存下来,撤销就是原样写回去。
+     不存快照的话,「记得」和「没记住」对 streak 的影响是不可逆的。 */
+  const undoStack = [];
+  const SNAP = ['success_streak','lifetime_review_count','review_count','first_streak_success_at',
+                'last_reviewed_at','status','mastered','mastered_at'];
+  const snapOf = it => Object.fromEntries(SNAP.map(k => [k, it[k] ?? null]));
+  const goBack = async () => {
+    const u = undoStack.pop(); if (!u) return;
+    const tbl = u.kind === 'err' ? 'lang_errors' : 'lang_items';
+    await q(sb.from(tbl).update(u.snap).eq('id', u.id), true);
+    idx = u.idx; render(); toast('改回来了 ↩');
+  };
   const render = () => {
     document.querySelector('.modal-mask')?.remove();
     if (idx >= list.length){ toast('复习完成 🌿 共 ' + list.length + ' 张'); route(); return; }
     const i = list[idx];
     const zh   = langZh(i.lang);
-    if (i._kind === 'err'){ renderTrap(i, idx, list.length, () => { idx++; render(); }); return; }
+    if (i._kind === 'err'){
+      renderTrap(i, idx, list.length,
+        () => { undoStack.push({ id:i.id, idx, snap:{ success_streak:i.success_streak ?? 0, last_reviewed_at:i.last_reviewed_at ?? null }, kind:'err' }); idx++; render(); },
+        undoStack.length ? goBack : null);
+      return;
+    }
     // 正面放中文,让你先「说得出」;没有释义的词退回旧模式(否则正面是空的)
     const { pron, rest } = splitPron(i);      // 读音拆出来,跟着生词一起放背面
     const hasMean = !!rest;
     document.body.insertAdjacentHTML('beforeend', `
      <div class="modal-mask"><div class="modal" style="max-width:520px;text-align:center">
-      <div class="spread"><span class="chip">${zh}</span><div class="row" style="gap:10px"><span class="muted">${idx+1} / ${list.length}</span><button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
+      <div class="spread"><span class="chip">${zh}</span><div class="row" style="gap:10px">${undoStack.length?'<button class="ghost" data-undo style="font-size:12px">↩ 改上一张</button>':''}<span class="muted">${idx+1} / ${list.length}</span><button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
       ${hasMean ? `
         <h2 style="margin:26px 0 4px;font-size:23px;line-height:1.4">${esc(rest)}</h2>
         <div class="muted" style="font-size:13px;margin-bottom:4px">想一想 —— 用${zh}怎么说?</div>
@@ -2868,7 +2910,11 @@ function startReview(list){
     };
     bindSpeak(mask);
     mask.querySelector('[data-end]').onclick = () => { mask.remove(); toast('今天复习就到这 🌿'); route(); };
-    mask.querySelectorAll('[data-r]').forEach(b => b.onclick = async () => { await srsMark(i, b.dataset.r); idx++; render(); });
+    mask.querySelector('[data-undo]') && (mask.querySelector('[data-undo]').onclick = goBack);
+    mask.querySelectorAll('[data-r]').forEach(b => b.onclick = async () => {
+      undoStack.push({ id:i.id, idx, snap:snapOf(i), kind:'word' });   // 先留底,再打分
+      await srsMark(i, b.dataset.r); idx++; render();
+    });
   };
   render();
 }
