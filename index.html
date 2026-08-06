@@ -250,7 +250,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-06</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-06b</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
@@ -1113,7 +1113,17 @@ async function route(){
   let timer = null;
   if (!view.innerHTML.trim()) view.innerHTML = SKELETON;
   else timer = setTimeout(() => { view.innerHTML = SKELETON; }, 120);
+  // ⚠️ 以前这里只有 try/finally —— 一页渲染失败就静默留在骨架或旧内容上,
+  //    你看到的是「功能没出现」,而不是「出错了」。最难查的就是这种。
   try { await (VIEWS[cur] || VIEWS.today)(); }
+  catch (e){
+    view.innerHTML = `<div class="card" style="border-color:var(--danger)">
+      <b>这一页没能打开</b>
+      <div style="font-size:13px;margin-top:8px;white-space:pre-wrap">${esc(String(e && e.message || e))}</div>
+      <div class="muted" style="font-size:11.5px;margin-top:10px;white-space:pre-wrap">${esc(String(e && e.stack || '').split('\n').slice(0,4).join('\n'))}</div>
+      <div class="muted" style="font-size:12px;margin-top:10px">把这段截图给我就行。</div>
+    </div>`;
+  }
   finally { if (timer) clearTimeout(timer); }
   window.scrollTo(0,0);
 }
