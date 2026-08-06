@@ -250,7 +250,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-06e</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-06f</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
@@ -2282,7 +2282,7 @@ VIEWS.lang = async function(){
   const hotErrs = (errs||[]).filter(e => !e.retired);
   const errDue  = e => !e.last_reviewed_at ||
     (Date.now() - new Date(e.last_reviewed_at).getTime()) > Math.pow(2, e.success_streak||0) * 86400000;
-  const trapToday = hotErrs.filter(errDue).slice(0, 1);   // 每天一个陷阱就够
+  const trapToday = hotErrs.filter(e => errDue(e) && (!langUI.revLang || e.lang === langUI.revLang)).slice(0, 1);  // 每天一个陷阱,跟着语言筛选走
   // 到期的可能很多(83 个词刚建完时会一起到期),所以每天只端一批;
   // 但计数必须说实话 —— 以前这里 slice 完直接当总数显示,复习完又冒出 6 个。
   const dueAllRaw = (items||[]).filter(flashDue);
@@ -2385,7 +2385,7 @@ VIEWS.lang = async function(){
       ${cands.length>12?`<div class="muted" style="font-size:12px;margin-top:8px">还有 ${cands.length-12} 个,处理完这批再看</div>`:''}
     </div>` : ''}
     <div class="grid g2">${LANGS.map(l => col(l.c)).join('')}</div>
-    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">${due.length ? `今天有 ${due.length} 个词在静静想你${dueMore?`　<span class="muted" style="font-size:13px;font-weight:400">后面还排着 ${dueMore} 个,不急</span>`:''}` : (langUI.revLang ? `这个语言今天没有到期的词` : '今天没有词在等你,温室很安静')}</h2>
+    <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">${due.length ? `今天有 ${due.length} 个词在静静想你${dueMore?`　<span class="muted" style="font-size:13px;font-weight:400">后面还排着 ${dueMore} 个,不急</span>`:''}` : (langUI.revLang ? `${langZh(langUI.revLang)}今天练完了 🌿${dueAllRaw.length ? `　<span class="muted" style="font-size:13px;font-weight:400">别的语言还有 ${dueAllRaw.length} 个</span>` : ''}` : '今天没有词在等你,温室很安静')}</h2>
       ${(due.length||trapToday.length) ? '<button class="primary" id="focus-review">▶ 一个个见它们</button>' : ''}</div>
     <div class="note" style="margin:2px 0 16px">
       <div class="muted" style="font-size:12.5px;margin-bottom:8px">
@@ -2414,7 +2414,7 @@ VIEWS.lang = async function(){
         <button class="ghost" data-trap="${e.id}" style="flex:0 0 auto;font-size:11.5px">去练</button>
       </div>`).join('')}
     </div>` : ''}
-    ${(langsWithDue > 1) ? `<div class="row" style="margin:-6px 0 14px;gap:8px;flex-wrap:wrap">
+    ${(langsWithDue > 1 || langUI.revLang) ? `<div class="row" style="margin:-6px 0 14px;gap:8px;flex-wrap:wrap">
       ${[['','全部练', dueAllRaw.length], ...LANGS.map(l => [l.c, '只练'+l.zh, dueAllRaw.filter(i=>i.lang===l.c).length])]
         .filter(([v,,n]) => v==='' || n>0)
         .map(([v,label,n]) => `<span class="chip click ${langUI.revLang===v?'sel':''}" data-revlang="${v}">${label} ${n}</span>`).join('')}
