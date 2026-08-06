@@ -250,7 +250,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-06d</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-06e</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
@@ -2809,7 +2809,7 @@ function renderTrap(e, idx, total, next){
   m.querySelector('#trap-flip').onclick = ev => {
     m.querySelector('#trap-back').classList.remove('hidden');
     ev.currentTarget.style.display = 'none';
-    bindSpeak(m); if (e.fixed) speak(e.fixed, e.lang);
+    bindSpeak(m);                                    // 同上:要听自己点 🔊
   };
   m.querySelector('[data-end]').onclick = () => { m.remove(); toast('今天复习就到这 🌿'); route(); };
   m.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
@@ -2864,8 +2864,7 @@ function startReview(list){
     mask.querySelector('#rev-flip').onclick = (ev) => {
       mask.querySelector('#rev-mean').classList.remove('hidden');
       ev.currentTarget.style.display = 'none';        // 翻过了就把按钮收掉
-      bindSpeak(mask);                                 // 翻面后才有朗读按钮
-      speak(i.expression, i.lang);                     // 翻面自动读一遍
+      bindSpeak(mask);                                 // 翻面后才有朗读按钮(点 🔊 才响)
     };
     bindSpeak(mask);
     mask.querySelector('[data-end]').onclick = () => { mask.remove(); toast('今天复习就到这 🌿'); route(); };
