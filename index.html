@@ -503,6 +503,172 @@ function nextSee(i){
   const d = Math.ceil((base - Date.now()) / 86400000);
   return d <= 0 ? '今天该见了' : d === 1 ? '明天见' : `${d} 天后`;
 }
+/* ═════════ 实战闭环:出题单导出 ↔ 报告导入 ═════════
+   闪卡验证的是「能想起来」,验证不了「用得出来」——
+   这一段就是把那个口子闭上。
+   A 组(🌾快长成)考听懂:GPT 自己用出来,看我接不接得住
+   B 组(🎓待毕业)考说出:GPT 诱导我说,自己绝不先说
+   C 组(🔥高频错误)要拦:犯了记下,但不当场打断 */
+const FIELD_A = 6, FIELD_B = 6, FIELD_PAT = 4;
+/* 轮换:没考过的优先,其次是最久没考的 */
+const rotate = arr => arr.slice().sort((a,b) =>
+  new Date(a.last_field_test_at || 0) - new Date(b.last_field_test_at || 0));
+function buildFieldPrompt(items, errs, lang){
+  const of = k => rotate((items||[]).filter(i => i.lang === lang && levelOf(i).k === k));
+  const A = of('almost').slice(0, FIELD_A);
+  const B = of('exam').slice(0, FIELD_B);
+  const C = (errs||[]).filter(e => !e.retired && e.lang === lang)
+                      .sort((a,b) => b.hits - a.hits).slice(0, 3);
+  if (!A.length && !B.length) return null;
+  const zh = lang === 'en' ? '英语' : '日语';
+  const list = a => a.map(x => x.expression).join(' / ');
+  return { A, B, C, text:
+`今天的${zh}口语练习,请按下面三组要求来。全程不要提「今天的目标是什么」。
+
+━━━ A 组 · 请你用出来,看我接不接得住 ━━━
+${A.length ? list(A) : '(这次没有)'}
+
+规则：
+· 你自己自然地把它们用在句子里,像平常说话一样
+· ⚠️ 不要解释这些词,不要问「你知道这个词吗」
+· 我如果没懂会自己问你 —— 你正常回答就行,记下来即可
+
+━━━ B 组 · 请诱导我说出来,你自己绝不能先说 ━━━
+${B.length ? list(B) : '(这次没有)'}
+
+规则：
+· 制造能自然用到它们的话题和追问,让我说出来
+· 我说不出来的,你也不要替我说 —— 换个角度再引一次就好
+· 如果整场都没聊到相关话题,如实标成 no_chance,不要硬凑
+
+━━━ C 组 · 我最近的坏习惯,记下但不要打断 ━━━
+${C.length ? C.map((e,n) => `${n+1} ${e.tag}${e.why ? '（'+e.why+'）' : ''}`).join('\n') : '(暂时没有)'}
+
+━━━ 结束时 ━━━
+我说「終わり」之后,输出下面这段,标记之外不要说任何话,
+内部是合法 JSON,不要用 markdown 代码块包裹,字段缺失就给 [] 。
+
+REPORT_V1_BEGIN
+{
+  "date": "${todayStr()}",
+  "lang": "${lang}",
+  "corrections": [
+    { "original": "我说的原句(一字不改)", "fixed": "自然的说法",
+      "type": "语法|搭配|用词|敬语|语序", "zh": "这句话的中文意思",
+      "why": "一句话解释", "tag": "错误类别名,能归类的" }
+  ],
+  "vocab":    [ { "word": "词", "meaning": "中文", "example": "我这次的语境句" } ],
+  "patterns": [ { "zh": "中文意思", "en": "句型骨架", "scene": "工作|日常|面试" } ],
+  "targets": {
+    "recognize": [ ${A.map(x=>`{ "item": "${x.expression}", "result": "got|asked|unclear" }`).join(',\n                   ') || ''} ],
+    "produce":   [ ${B.map(x=>`{ "item": "${x.expression}", "result": "used|prompted|missed|no_chance" }`).join(',\n                   ') || ''} ]
+  },
+  "top_issue": "这次最该改的一件事(一句话)"
+}
+REPORT_V1_END
+
+⚠️ 三条硬要求：
+1. 不要为了让我高兴就把 missed 写成 used
+2. 不确定我懂没懂,一律写 unclear —— 我沉默不代表我没懂
+3. missed(给过机会没说出来) 和 no_chance(没聊到) 一定要分清楚
+4. corrections 里的 original 必须是我真的说过的原话,不要编` };
+}
+/* 解析报告:纯 JSON / ```json 块 / REPORT_V1 标记,三种都认 */
+function parseReport(txt){
+  let s = String(txt || '').trim();
+  const mk = s.match(/REPORT_V1_BEGIN([\s\S]*?)REPORT_V1_END/);
+  if (mk) s = mk[1];
+  else { const cb = s.match(/```(?:json)?\s*([\s\S]*?)```/); if (cb) s = cb[1]; }
+  const a = s.indexOf('{'), b = s.lastIndexOf('}');
+  if (a >= 0 && b > a) s = s.slice(a, b + 1);
+  const o = JSON.parse(s);
+  const arr = v => Array.isArray(v) ? v : [];
+  return {
+    date: /^\d{4}-\d{2}-\d{2}$/.test(o.date) ? o.date : todayStr(),
+    lang: o.lang === 'ja' ? 'ja' : 'en',
+    corrections: arr(o.corrections), vocab: arr(o.vocab), patterns: arr(o.patterns),
+    recognize: arr(o.targets?.recognize), produce: arr(o.targets?.produce),
+    top_issue: typeof o.top_issue === 'string' ? o.top_issue : '',
+    raw: o,
+  };
+}
+/* 预演一遍,让你先看清楚要写什么(GPT 一定会偶尔漏字段、瞎编 tag) */
+async function previewReport(r){
+  const exist = await q(sb.from('lang_items').select('id,expression,lang,success_streak,status,mastered,miss_count')
+    .eq('lang', r.lang)) || [];
+  const has = new Set(exist.map(x => (x.expression||'').trim().toLowerCase()));
+  const errs = await q(sb.from('lang_errors').select('id,tag,hits').eq('lang', r.lang), true) || [];
+  const tagSet = new Set(errs.map(e => e.tag));
+  const newVocab = r.vocab.filter(v => v.word && !has.has(String(v.word).trim().toLowerCase()));
+  const dupVocab = r.vocab.length - newVocab.length;
+  const oldErr = r.corrections.filter(c => c.tag && tagSet.has(c.tag)).length;
+  const noTag  = r.corrections.filter(c => !c.tag).length;
+  return { exist, newVocab, dupVocab, oldErr, noTag,
+           newErr: r.corrections.length - oldErr };
+}
+/* 真正写进去 */
+async function applyReport(r){
+  const now = new Date().toISOString();
+  const p = await previewReport(r);
+  const byExp = {}; p.exist.forEach(x => byExp[(x.expression||'').trim().toLowerCase()] = x);
+
+  // ① 新词
+  for (const v of p.newVocab)
+    await q(sb.from('lang_items').insert({ lang:r.lang, expression:String(v.word).trim(),
+      meaning: v.meaning || null, example: v.example || null, source:'report',
+      status:'flashcard_learning', success_streak:0, review_count:0 }), true);
+
+  // ② 纠错:按 (lang, tag) 归并 —— 整套设计的关键就在这几行
+  for (const c of r.corrections){
+    const tag = (c.tag || '未分类').trim();
+    const cur = await q(sb.from('lang_errors').select('*').eq('lang',r.lang).eq('tag',tag).maybeSingle(), true);
+    const sample = { original: c.original || '', at: now };
+    if (cur){
+      await q(sb.from('lang_errors').update({
+        hits: (cur.hits||0) + 1,
+        samples: [...(cur.samples||[]), sample].slice(-10),
+        last_seen_at: now, retired: false,                 // 又犯了 → 重新激活
+        fixed: c.fixed || cur.fixed, zh: c.zh || cur.zh,
+        why: c.why || cur.why, err_type: c.type || cur.err_type,
+      }).eq('id', cur.id), true);
+    } else {
+      await q(sb.from('lang_errors').insert({ lang:r.lang, tag, err_type:c.type || null,
+        zh:c.zh || null, fixed:c.fixed || null, why:c.why || null,
+        samples:[sample], hits:1, last_seen_at: now }), true);
+    }
+  }
+
+  // ③ A 组回写:考听懂
+  for (const t of r.recognize){
+    const it = byExp[String(t.item||'').trim().toLowerCase()]; if (!it) continue;
+    if (t.result === 'got')
+      await q(sb.from('lang_items').update({ success_streak:(it.success_streak||0)+1,
+        last_reviewed_at: now }).eq('id', it.id), true);
+    else if (t.result === 'asked')     // 只降一级,不清零 —— 那几次连对是真发生过的
+      await q(sb.from('lang_items').update({ success_streak: Math.max(0,(it.success_streak||0)-1),
+        last_reviewed_at: now }).eq('id', it.id), true);
+  }
+
+  // ④ B 组回写:考说出
+  for (const t of r.produce){
+    const it = byExp[String(t.item||'').trim().toLowerCase()]; if (!it) continue;
+    if (t.result === 'used')           // ⭐ 真实对话里用出来 = 最硬的毕业证明
+      await q(sb.from('lang_items').update({ mastered:true, status:'mastered',
+        mastered_at: now, miss_count:0 }).eq('id', it.id), true);
+    else if (t.result === 'missed'){
+      const n = (it.miss_count||0) + 1;
+      await q(sb.from('lang_items').update(n >= 3
+        ? { miss_count:0, status:'flashcard_learning', success_streak:3 }   // 三次没说出来 → 退回🌾
+        : { miss_count:n }).eq('id', it.id), true);
+    }
+    // prompted / no_chance:什么都不做
+  }
+
+  await q(sb.from('lang_reports').insert({ date:r.date, lang:r.lang,
+    raw:r.raw, top_issue:r.top_issue || null }), true);
+  await bumpCheckin(r.lang, 0);
+  return p;
+}
 /* ——— 朗读:用浏览器自带的合成语音,不花任何额度 ——— */
 function speak(text, lang){
   const t = String(text || '').trim(); if (!t) return;
@@ -2073,12 +2239,18 @@ async function calcStreak(){
 }
 VIEWS.lang = async function(){
   const today = todayStr();
-  const [items, streak, insights, cands] = await Promise.all([
+  const [items, streak, insights, cands, errs] = await Promise.all([
     q(sb.from('lang_items').select('*').order('created_at',{ascending:false})),
     calcStreak(),
     q(sb.from('ai_insights').select('*').eq('scope','lang_monthly').order('date',{ascending:false}).limit(1)),
     q(sb.from('lang_candidates').select('*').eq('handled',false).order('created_at',{ascending:false}), true),
+    q(sb.from('lang_errors').select('*').order('hits',{ascending:false}), true),
   ]);
+  q(sb.rpc('retire_stale_errors'), true);          // 顺手把 30 天没再犯的收起来
+  const hotErrs = (errs||[]).filter(e => !e.retired);
+  const errDue  = e => !e.last_reviewed_at ||
+    (Date.now() - new Date(e.last_reviewed_at).getTime()) > Math.pow(2, e.success_streak||0) * 86400000;
+  const trapToday = hotErrs.filter(errDue).slice(0, 1);   // 每天一个陷阱就够
   // 到期的可能很多(83 个词刚建完时会一起到期),所以每天只端一批;
   // 但计数必须说实话 —— 以前这里 slice 完直接当总数显示,复习完又冒出 6 个。
   const dueAllRaw = (items||[]).filter(flashDue);
@@ -2182,7 +2354,25 @@ VIEWS.lang = async function(){
     </div>` : ''}
     <div class="grid g2">${col('en')}${col('ja')}</div>
     <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">${due.length ? `今天有 ${due.length} 个词在静静想你${dueMore?`　<span class="muted" style="font-size:13px;font-weight:400">后面还排着 ${dueMore} 个,不急</span>`:''}` : (langUI.revLang ? `这个语言今天没有到期的词` : '今天没有词在等你,温室很安静')}</h2>
-      ${due.length ? '<button class="primary" id="focus-review">▶ 一个个见它们</button>' : ''}</div>
+      ${(due.length||trapToday.length) ? '<button class="primary" id="focus-review">▶ 一个个见它们</button>' : ''}</div>
+    <div class="row" style="margin:-6px 0 14px;gap:8px;flex-wrap:wrap">
+      <button class="ghost" id="field-out" style="font-size:12.5px">⧉ 复制今日出题单</button>
+      <button class="ghost" id="field-in"  style="font-size:12.5px">⊕ 导入练习报告</button>
+      <span class="muted" style="font-size:11.5px">上面练「认得」· 这两个练「用得出」</span>
+    </div>
+    ${hotErrs.length ? `<div class="card" style="margin-bottom:14px">
+      <div class="spread"><b style="font-size:14px">🔥 你最常犯的${Math.min(3,hotErrs.length)}个</b>
+        <span class="muted" style="font-size:11.5px">30 天没再犯会自动收起来</span></div>
+      ${hotErrs.slice(0,3).map((e,n)=>`<div class="itemline" style="padding:7px 0">
+        <span class="muted" style="flex:0 0 auto;width:20px">${n+1}</span>
+        <div style="flex:1;min-width:0">
+          <div class="exp" style="font-size:14px">${esc(e.tag)} <span class="muted" style="font-size:11px">${esc(e.err_type||'')} · ${e.lang==='en'?'EN':'JA'}</span></div>
+          ${e.why?`<div class="muted" style="font-size:12px">${esc(e.why)}</div>`:''}
+        </div>
+        <span class="muted" style="flex:0 0 auto;font-size:12px">${e.hits} 次</span>
+        <button class="ghost" data-trap="${e.id}" style="flex:0 0 auto;font-size:11.5px">去练</button>
+      </div>`).join('')}
+    </div>` : ''}
     ${(revEN && revJA) ? `<div class="row" style="margin:-6px 0 14px;gap:8px">
       ${[['','两种都练',revEN+revJA],['en','只练英语',revEN],['ja','只练日语',revJA]]
         .map(([v,label,n]) => `<span class="chip click ${langUI.revLang===v?'sel':''}" data-revlang="${v}">${label} ${n}</span>`).join('')}
@@ -2255,6 +2445,24 @@ VIEWS.lang = async function(){
   });
   document.querySelectorAll('[data-revlang]').forEach(c => c.onclick = () => { langUI.revLang = c.dataset.revlang; VIEWS.lang(); });
   bindSpeak();
+  /* ——— 实战闭环:导出 / 导入 / 去练 ——— */
+  $('#field-out') && ($('#field-out').onclick = async () => {
+    const lang = langUI.revLang || (dueAllRaw.some(i=>i.lang==='ja') && !dueAllRaw.some(i=>i.lang==='en') ? 'ja' : 'en');
+    const built = buildFieldPrompt(items, errs, lang);
+    if (!built) return toast('还没有🌾或🎓阶段的词 —— 先把闪卡连对几次');
+    try { await navigator.clipboard.writeText(built.text); }
+    catch { return openTextModal('今日出题单（手动复制）', built.text); }
+    // 记一次,下次轮换别的词
+    const now = new Date().toISOString();
+    for (const x of [...built.A, ...built.B])
+      await q(sb.from('lang_items').update({ last_field_test_at: now }).eq('id', x.id), true);
+    toast(`已复制 · 考听懂 ${built.A.length} · 考说出 ${built.B.length} · 要拦 ${built.C.length}`);
+  });
+  $('#field-in') && ($('#field-in').onclick = () => openImportModal());
+  document.querySelectorAll('[data-trap]').forEach(b => b.onclick = () => {
+    const e = (errs||[]).find(x => x.id === b.dataset.trap);
+    if (e) startReview([{ ...e, _kind:'err' }]);
+  });
   $('#lib-sort') && ($('#lib-sort').onchange = e => { langUI.sort = e.target.value; renderLib(); });
   if (langUI.libOpen) renderLib();
   // 方向切换
@@ -2328,7 +2536,8 @@ VIEWS.lang = async function(){
     }
     b.disabled = false;
   });
-  $('#focus-review') && ($('#focus-review').onclick = () => startReview(due));
+  $('#focus-review') && ($('#focus-review').onclick = () =>
+    startReview([...due, ...trapToday.map(e => ({ ...e, _kind:'err' }))]));   // 词 + 今天那个陷阱
   /* ——— 毕业考场 ——— */
   $('#exam-copy') && ($('#exam-copy').onclick = async (ev) => {
     const txt = examPrompt(examReady.slice(0,5));      // 一场最多考 5 个,考太多会失焦
@@ -2469,6 +2678,109 @@ async function srsMark(i, kind){
   if (kind === 'mastered') return q(sb.from('lang_items').update({
       mastered: true, status: 'mastered', mastered_at: now }).eq('id', i.id));
 }
+/* 复制失败时的兜底:把文本摊开让你手动选 */
+function openTextModal(title, text){
+  closeModal(false);
+  document.body.insertAdjacentHTML('beforeend', `
+   <div class="modal-mask"><div class="modal" style="max-width:640px">
+    <div class="spread"><b>${esc(title)}</b><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
+    <textarea class="small-in" style="width:100%;height:340px;margin-top:10px;font-size:12px">${esc(text)}</textarea>
+    <div class="muted" style="font-size:12px;margin-top:6px">浏览器不让自动复制 —— 长按全选,自己复制一下</div>
+   </div></div>`);
+  const m = document.querySelector('.modal-mask');
+  m.querySelector('[data-mclose]').onclick = () => closeModal(false);
+  m.querySelector('textarea').select();
+}
+/* 导入报告:粘贴 → 校验预览 → 确认写入 */
+function openImportModal(){
+  closeModal(false);
+  document.body.insertAdjacentHTML('beforeend', `
+   <div class="modal-mask"><div class="modal" style="max-width:600px">
+    <div class="spread"><b>⊕ 导入练习报告</b><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
+    <div class="muted" style="font-size:12.5px;margin:6px 0 10px">
+      把 GPT 结束时给的那段贴进来。纯 JSON、\`\`\`json 代码块、REPORT_V1 标记包裹的,三种都认。</div>
+    <textarea class="small-in" id="rep-in" style="width:100%;height:200px;font-size:12px" placeholder="在这里粘贴…"></textarea>
+    <div id="rep-pre" class="note hidden" style="margin-top:10px"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="rep-check">校验并预览</button>
+      <button class="ghost hidden" id="rep-go">确认写入</button>
+    </div>
+   </div></div>`);
+  const m = document.querySelector('.modal-mask');
+  m.querySelector('[data-mclose]').onclick = () => closeModal(false);
+  keepDraft(m.querySelector('#rep-in'), 'report-in');
+  let parsed = null;
+  m.querySelector('#rep-check').onclick = async () => {
+    const box = m.querySelector('#rep-pre'); box.classList.remove('hidden');
+    try { parsed = parseReport(m.querySelector('#rep-in').value); }
+    catch (e){ parsed = null; box.innerHTML = `<b style="color:var(--danger)">解析失败</b><div class="muted" style="font-size:12px">${esc(e.message)}</div><div class="muted" style="font-size:12px;margin-top:4px">检查一下有没有把 GPT 前后的客套话也复制进来了。</div>`; return; }
+    const p = await previewReport(parsed);
+    box.innerHTML = `<b>✅ 格式校验通过</b>
+      <div style="margin-top:6px;font-size:13px">
+        ${esc(parsed.date)} · ${parsed.lang==='en'?'英语':'日语'}<br>
+        新词 <b>${p.newVocab.length}</b>${p.dupVocab?` <span class="muted">（${p.dupVocab} 个已存在,会跳过）</span>`:''}<br>
+        纠错 <b>${parsed.corrections.length}</b>${p.oldErr?` <span class="muted">（其中 ${p.oldErr} 个是老问题,次数 +1）</span>`:''}<br>
+        考听懂回执 <b>${parsed.recognize.length}</b> · 考说出回执 <b>${parsed.produce.length}</b>
+        ${p.noTag?`<br><span style="color:var(--danger)">⚠️ 有 ${p.noTag} 条没写 tag,会归到「未分类」</span>`:''}
+        ${parsed.top_issue?`<div class="muted" style="margin-top:6px">最该改的：${esc(parsed.top_issue)}</div>`:''}
+      </div>`;
+    m.querySelector('#rep-go').classList.remove('hidden');
+  };
+  m.querySelector('#rep-go').onclick = async () => {
+    if (!parsed) return;
+    m.querySelector('#rep-go').disabled = true;
+    const p = await applyReport(parsed);
+    clearDraft('report-in');
+    closeModal(false);
+    toast(`收好了 · 新词 ${p.newVocab.length} · 纠错 ${parsed.corrections.length} 🌿`);
+    VIEWS.lang();
+  };
+}
+/* ⚠️ 陷阱卡:和词卡不一样 —— 你不是要「背住」这个错,
+   是要在下次说话前拦住自己。所以背面摆的是「你上次说错的原句」。 */
+function renderTrap(e, idx, total, next){
+  const zh  = e.lang === 'en' ? '英语' : '日语';
+  const last = (e.samples||[]).slice(-1)[0]?.original || '';
+  const front = e.zh || e.tag;
+  document.body.insertAdjacentHTML('beforeend', `
+   <div class="modal-mask"><div class="modal" style="max-width:520px;text-align:center">
+    <div class="spread"><span class="chip">⚠️ 陷阱 · ${zh}</span>
+      <div class="row" style="gap:10px"><span class="muted">${idx+1} / ${total}</span>
+      <button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
+    <div class="muted" style="font-size:12px;margin-top:14px">你犯过 ${e.hits} 次 · ${esc(e.tag)}</div>
+    <h2 style="margin:8px 0 4px;font-size:22px;line-height:1.4">${esc(front)}</h2>
+    <div class="muted" style="font-size:13px;margin-bottom:4px">说说看 —— 用${zh}怎么说?</div>
+    <div id="trap-back" class="hidden">
+      <div class="wave"></div>
+      <div style="font-size:19px;font-weight:600;margin:4px 0">✅ ${esc(e.fixed||'')} ${e.fixed?spkBtn(e.fixed, e.lang, 16):''}</div>
+      ${last?`<div class="note" style="margin:10px 0;text-align:left;font-size:13.5px">
+        <span class="muted" style="font-size:11.5px">⚠️ 你上次说的</span><br>${esc(last)}</div>`:''}
+      ${e.why?`<div class="muted" style="font-size:12.5px">${esc(e.why)}</div>`:''}
+    </div>
+    <button id="trap-flip" class="ghost" style="margin:10px 0 16px">翻面看答案 ↺</button>
+    <div class="row" style="justify-content:center;gap:10px">
+      <button data-t="wrong">还会错 ↻</button>
+      <button class="primary" data-t="right">这次对了 ✓</button>
+    </div>
+   </div></div>`);
+  const m = document.querySelector('.modal-mask');
+  m.addEventListener('click', ev => { if (ev.target === m){ m.remove(); route(); } });
+  m.querySelector('#trap-flip').onclick = ev => {
+    m.querySelector('#trap-back').classList.remove('hidden');
+    ev.currentTarget.style.display = 'none';
+    bindSpeak(m); if (e.fixed) speak(e.fixed, e.lang);
+  };
+  m.querySelector('[data-end]').onclick = () => { m.remove(); toast('今天复习就到这 🌿'); route(); };
+  m.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
+    const ok = b.dataset.t === 'right';
+    await q(sb.from('lang_errors').update({
+      success_streak: ok ? (e.success_streak||0) + 1 : 0,
+      last_reviewed_at: new Date().toISOString(),
+    }).eq('id', e.id), true);
+    await bumpCheckin(e.lang, 0);
+    next();
+  });
+}
 function startReview(list){
   let idx = 0;
   const render = () => {
@@ -2476,6 +2788,7 @@ function startReview(list){
     if (idx >= list.length){ toast('复习完成 🌿 共 ' + list.length + ' 张'); route(); return; }
     const i = list[idx];
     const zh   = i.lang === 'en' ? '英语' : '日语';
+    if (i._kind === 'err'){ renderTrap(i, idx, list.length, () => { idx++; render(); }); return; }
     // 正面放中文,让你先「说得出」;没有释义的词退回旧模式(否则正面是空的)
     const { pron, rest } = splitPron(i);      // 读音拆出来,跟着生词一起放背面
     const hasMean = !!rest;
