@@ -113,6 +113,11 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
 :root{
   --yellow:#f2c94c; --mist:#9db8c4; --pink:#e8a0a2; --trunk:#b07d4f; --inkdeep:#22382c;
   --hand-zh:"HanziPen SC","Wawati SC","Yuanti SC","Kaiti SC",var(--serif);
+  /* 学习内容专用:手写体好看,但对着它认字太累。
+     目标语言用「书上的字体」,中文解释用最清楚的黑体。 */
+  --f-ja:"Hiragino Mincho ProN","Yu Mincho",YuMincho,"MS Mincho","Songti SC",serif;
+  --f-en:Georgia,"Iowan Old Style","Times New Roman",serif;
+  --f-zh:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
   --hand-mix:"Bradley Hand","Marker Felt","Chalkboard SE","Comic Sans MS","HanziPen SC","Wawati SC","Yuanti SC","Kaiti SC",cursive;
 }
 h1.hero{font-family:var(--hand-zh);font-weight:500;line-height:1.32;transform:rotate(-1deg);transform-origin:left center}
@@ -227,6 +232,8 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
 .itemline.click{cursor:pointer;border-radius:8px}
 .itemline.click:hover{background:var(--paper)}
 .exp{font-weight:500}
+.f-ja{font-family:var(--f-ja)} .f-en{font-family:var(--f-en)} .f-zh{font-family:var(--f-zh)}
+.f-ja,.f-en{font-feature-settings:"palt" 0}   /* 别挤字距,认字要紧 */
 .small-in{width:auto;flex:1}
 @media (max-width:760px){
   nav.desk{display:none} nav.mob{display:block} main{padding-top:24px}
@@ -250,7 +257,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-10a</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-10c</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
@@ -471,8 +478,8 @@ async function addTodoRow(title, due, pid){
    现在想加法语,就在这里加一行,别处都会自己长出来。
    tts 是浏览器朗读用的语言码;dict 是查词方向的标签。 */
 const LANGS = [
-  { c:'en', zh:'英语', tts:'en-US' },
-  { c:'ja', zh:'日语', tts:'ja-JP' },
+  { c:'en', zh:'英语', tts:'en-US', f:'f-en' },
+  { c:'ja', zh:'日语', tts:'ja-JP', f:'f-ja' },
   // { c:'fr', zh:'法语', tts:'fr-FR' },
   // { c:'ko', zh:'韩语', tts:'ko-KR' },
   // { c:'de', zh:'德语', tts:'de-DE' },
@@ -481,6 +488,7 @@ const LZ       = Object.fromEntries(LANGS.map(l => [l.c, l]));
 const langZh   = c => LZ[c]?.zh || c;
 const langCode = zh => (LANGS.find(l => l.zh === zh) || {}).c;
 const LCODES   = LANGS.map(l => l.c);
+const fL       = c => (LZ[c] && LZ[c].f) || 'f-en';   // 该用哪套字体
 const EXAM_STREAK = 3, EXAM_SPAN_DAYS = 8;
 const DAILY_REVIEW = 6;   // 每天端一批的大小(到期的可能有几十个,一次全端会劝退)
 const streakOf  = i => (i.success_streak ?? i.review_count ?? 0);
@@ -2535,8 +2543,8 @@ VIEWS.lang = async function(){
         练习时你「想说但说不出来」的表达。<b>还没有进复习队列</b> —— 等句型库做好会自动接上。</div>
       ${pats.slice(0,40).map(x=>`<div class="itemline" style="padding:7px 0;align-items:flex-start">
         <div style="flex:1;min-width:0">
-          <div class="exp" style="font-size:14px">${esc(x.en)} ${spkBtn(x.en, x.lang, 13)}</div>
-          <div class="muted" style="font-size:12.5px">${esc(x.zh)}${x.scene?` · ${esc(x.scene)}`:''}</div>
+          <div class="exp ${fL(x.lang)}" style="font-size:15px">${esc(x.en)} ${spkBtn(x.en, x.lang, 13)}</div>
+          <div class="muted f-zh" style="font-size:12.5px">${esc(x.zh)}${x.scene?` · ${esc(x.scene)}`:''}</div>
         </div>
         <span class="muted" style="flex:0 0 auto;font-size:11.5px">${esc(String(x.date||'').slice(5))}</span>
       </div>`).join('')}
@@ -2562,8 +2570,8 @@ VIEWS.lang = async function(){
       return `<div class="itemline click" data-word="${i.id}">
         <span style="flex:0 0 auto;font-size:15px;margin-right:8px" title="${lv.name}">${lv.ic}</span>
         <div style="flex:1;min-width:0">
-          <div class="exp">${esc(i.expression)} <span class="muted" style="font-size:11px">${langZh(i.lang)} · ${lv.name}${ns?' · '+ns:''}</span></div>
-          <div class="muted">${esc((i.meaning||'').slice(0,50))}</div>
+          <div class="exp ${fL(i.lang)}" style="font-size:15px">${esc(i.expression)} <span class="muted" style="font-size:11px;font-family:var(--sans)">${langZh(i.lang)} · ${lv.name}${ns?' · '+ns:''}</span></div>
+          <div class="muted f-zh">${esc((i.meaning||'').slice(0,50))}</div>
         </div>
         <span style="flex:0 0 auto">${spkBtn(i.expression, i.lang, 14)}</span>
         <span class="muted" style="flex:0 0 auto">›</span></div>`;
@@ -2743,9 +2751,9 @@ async function openWord(id){
   document.body.insertAdjacentHTML('beforeend', `
    <div class="modal-mask"><div class="modal" style="max-width:520px">
     <div class="spread"><span class="chip">${langZh(i.lang)} · ${levelOf(i).ic} ${levelOf(i).name}</span><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
-    <h2>${esc(i.expression)} ${spkBtn(i.expression, i.lang, 19)}</h2>
-    <div style="margin:8px 0">${esc(i.meaning||'(还没有释义，点「AI 重查」补上)')}</div>
-    ${i.example?`<div class="muted" style="font-size:13.5px">${esc(i.example)} ${spkBtn(i.example, i.lang, 13)}</div>`:''}
+    <h2 class="${fL(i.lang)}">${esc(i.expression)} ${spkBtn(i.expression, i.lang, 19)}</h2>
+    <div class="f-zh" style="margin:8px 0">${esc(i.meaning||'(还没有释义，点「AI 重查」补上)')}</div>
+    ${i.example?`<div class="muted ${fL(i.lang)}" style="font-size:14px">${esc(i.example)} ${spkBtn(i.example, i.lang, 13)}</div>`:''}
     <div class="muted" style="font-size:12px;margin-top:8px">${nextSee(i)?nextSee(i)+' · ':''}连对 ${streakOf(i)}/${EXAM_STREAK} · 一共学过 ${i.lifetime_review_count ?? i.review_count ?? 0} 次${
       (i.exam_fail_count||0)?` · 毕业考挂过 ${i.exam_fail_count} 次`:''}${
       i.status==='exam_ready'?' · 🎓 等着毕业考':i.status==='suspended'?' · 🍂 已放下':''}</div>
@@ -2938,6 +2946,53 @@ function openImportModal(){
     VIEWS.lang();
   };
 }
+/* ⚠️ 陷阱卡:和词卡不一样 —— 你不是要「背住」这个错,
+   是要在下次说话前拦住自己。所以背面摆的是「你上次说错的原句」。 */
+function renderTrap(e, idx, total, next, back){
+  const zh  = langZh(e.lang), F = fL(e.lang);
+  const last = (e.samples||[]).slice(-1)[0]?.original || '';
+  const front = e.zh || e.tag;
+  document.body.insertAdjacentHTML('beforeend', `
+   <div class="modal-mask"><div class="modal" style="max-width:520px;text-align:center">
+    <div class="spread"><span class="chip">⚠️ 陷阱 · ${zh}</span>
+      <div class="row" style="gap:10px">${back?'<button class="ghost" data-undo style="font-size:12px">↩ 改上一张</button>':''}<span class="muted">${idx+1} / ${total}</span>
+      <button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
+    <div class="muted" style="font-size:12px;margin-top:14px">你犯过 ${e.hits} 次 · ${esc(e.tag)}</div>
+    <h2 class="f-zh" style="margin:8px 0 4px;font-size:22px;line-height:1.4;font-weight:500">${esc(front)}</h2>
+    <div class="muted" style="font-size:13px;margin-bottom:4px">说说看 —— 用${zh}怎么说?</div>
+    <div id="trap-back" class="hidden">
+      <div class="wave"></div>
+      <div class="${F}" style="font-size:20px;font-weight:600;margin:4px 0">✅ ${esc(e.fixed||'')} ${e.fixed?spkBtn(e.fixed, e.lang, 16):''}</div>
+      ${last?`<div class="note" style="margin:10px 0;text-align:left;font-size:13.5px">
+        <span class="muted" style="font-size:11.5px">⚠️ 你上次说的</span><br>
+        <span class="${F}" style="font-size:15px">${esc(last)}</span></div>`:''}
+      ${e.why?`<div class="muted f-zh" style="font-size:12.5px">${esc(e.why)}</div>`:''}
+    </div>
+    <button id="trap-flip" class="ghost" style="margin:10px 0 16px">翻面看答案 ↺</button>
+    <div class="row" style="justify-content:center;gap:10px">
+      <button data-t="wrong">还会错 ↻</button>
+      <button class="primary" data-t="right">这次对了 ✓</button>
+    </div>
+   </div></div>`);
+  const m = document.querySelector('.modal-mask');
+  m.addEventListener('click', ev => { if (ev.target === m){ m.remove(); route(); } });
+  m.querySelector('#trap-flip').onclick = ev => {
+    m.querySelector('#trap-back').classList.remove('hidden');
+    ev.currentTarget.style.display = 'none';
+    bindSpeak(m);                                    // 要听自己点 🔊
+  };
+  m.querySelector('[data-end]').onclick = () => { m.remove(); toast('今天复习就到这 🌿'); route(); };
+  m.querySelector('[data-undo]') && (m.querySelector('[data-undo]').onclick = back);
+  m.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
+    const ok = b.dataset.t === 'right';
+    await q(sb.from('lang_errors').update({
+      success_streak: ok ? (e.success_streak||0) + 1 : 0,
+      last_reviewed_at: new Date().toISOString(),
+    }).eq('id', e.id), true);
+    await bumpCheckin(e.lang, 0);
+    next();
+  });
+}
 function startReview(list){
   let idx = 0;
   /* 选错了要能改回来 —— 打分前先把这条的原样存下来,撤销就是原样写回去。
@@ -2970,16 +3025,16 @@ function startReview(list){
      <div class="modal-mask"><div class="modal" style="max-width:520px;text-align:center">
       <div class="spread"><span class="chip">${zh}</span><div class="row" style="gap:10px">${undoStack.length?'<button class="ghost" data-undo style="font-size:12px">↩ 改上一张</button>':''}<span class="muted">${idx+1} / ${list.length}</span><button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
       ${hasMean ? `
-        <h2 style="margin:26px 0 4px;font-size:23px;line-height:1.4">${esc(rest)}</h2>
+        <h2 class="f-zh" style="margin:26px 0 4px;font-size:23px;line-height:1.4;font-weight:500">${esc(rest)}</h2>
         <div class="muted" style="font-size:13px;margin-bottom:4px">想一想 —— 用${zh}怎么说?</div>
         <div id="rev-mean" class="hidden">
           <div class="wave"></div>
-          <div style="font-size:26px;font-weight:600;margin:2px 0 2px">${esc(i.expression)} ${spkBtn(i.expression, i.lang, 20)}</div>
-          ${pron ? `<div class="muted" style="font-size:14px;margin-bottom:6px">${esc(pron)}</div>` : '<div style="height:4px"></div>'}
-          ${i.example ? `<div class="muted" style="font-size:13px">${esc(i.example)} ${spkBtn(i.example, i.lang, 13)}</div>` : ''}
+          <div class="${fL(i.lang)}" style="font-size:27px;font-weight:600;margin:2px 0">${esc(i.expression)} ${spkBtn(i.expression, i.lang, 20)}</div>
+          ${pron ? `<div class="muted f-en" style="font-size:14.5px;margin-bottom:6px">${esc(pron)}</div>` : '<div style="height:4px"></div>'}
+          ${i.example ? `<div class="muted ${fL(i.lang)}" style="font-size:13.5px">${esc(i.example)} ${spkBtn(i.example, i.lang, 13)}</div>` : ''}
         </div>`
       : `
-        <h2 style="margin:28px 0 4px;font-size:26px">${esc(i.expression)}</h2>
+        <h2 class="${fL(i.lang)}" style="margin:28px 0 4px;font-size:26px">${esc(i.expression)}</h2>
         <div class="muted" style="font-size:13px;margin-bottom:4px">这条还没有释义 —— 凭感觉回想</div>
         <div id="rev-mean" class="hidden">
           <div class="wave"></div>
