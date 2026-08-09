@@ -250,7 +250,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-09c</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-09e</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
@@ -604,7 +604,16 @@ function repairJson(src){
     const c = src[i];
     if (esc){ out += c; esc = false; continue; }
     if (inStr && c === '\\'){ out += c; esc = true; continue; }
-    if (c === '"'){ inStr = !inStr; out += c; continue; }
+    if (c === '"'){
+      if (!inStr){ inStr = true; out += c; continue; }
+      // 字符串里遇到 " —— 是收尾还是内容?
+      // 往后看:跳过空白,如果紧跟 , } ] : 或结尾,才当收尾;否则是内容,转义掉。
+      // (LLM 常在中文解释里直接写 "xxx",这一条专治那个)
+      let k = i + 1; while (k < src.length && /\s/.test(src[k])) k++;
+      if (k >= src.length || ',}]:'.includes(src[k])){ inStr = false; out += c; }
+      else out += '\\"';
+      continue;
+    }
     if (!inStr && FIX[c]){ out += FIX[c]; continue; }
     if (inStr && (c === '\n' || c === '\r')){ out += '\\n'; continue; }  // 字符串里的裸换行
     out += c;
