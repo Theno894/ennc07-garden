@@ -250,7 +250,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-07a</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-09a</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
@@ -625,7 +625,9 @@ async function previewReport(r){
   const dupVocab = r.vocab.length - newVocab.length;
   const oldErr = r.corrections.filter(c => c.tag && tagSet.has(c.tag)).length;
   const noTag  = r.corrections.filter(c => !c.tag).length;
-  return { exist, newVocab, dupVocab, oldErr, noTag,
+  const dupList = r.vocab.filter(v => v.word && has.has(String(v.word).trim().toLowerCase()))
+                          .map(v => String(v.word).trim());
+  return { exist, newVocab, dupVocab, dupList, oldErr, noTag,
            newErr: r.corrections.length - oldErr };
 }
 /* 真正写进去 */
@@ -2784,6 +2786,7 @@ function openImportModal(){
       <div style="margin-top:6px;font-size:13px">
         ${esc(parsed.date)} · ${parsed.langZh(lang)}<br>
         新词 <b>${p.newVocab.length}</b>${p.dupVocab?` <span class="muted">（${p.dupVocab} 个已存在,会跳过）</span>`:''}<br>
+        ${p.dupList.length?`<span class="muted" style="font-size:12px">跳过的：${p.dupList.map(esc).join('、')}</span><br>`:''}
         纠错 <b>${parsed.corrections.length}</b>${p.oldErr?` <span class="muted">（其中 ${p.oldErr} 个是老问题,次数 +1）</span>`:''}<br>
         考听懂回执 <b>${parsed.recognize.length}</b> · 考说出回执 <b>${parsed.produce.length}</b>
         ${p.noTag?`<br><span style="color:var(--danger)">⚠️ 有 ${p.noTag} 条没写 tag,会归到「未分类」</span>`:''}
