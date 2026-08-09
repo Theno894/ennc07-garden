@@ -250,7 +250,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-09f</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-10a</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
@@ -669,20 +669,22 @@ async function previewReport(r){
   const noTag  = r.corrections.filter(c => !c.tag).length;
   const dupList = r.vocab.filter(v => v.word && has.has(String(v.word).trim().toLowerCase()))
                           .map(v => String(v.word).trim());
-  return { exist, newVocab, dupVocab, dupList, oldErr, noTag,
+  return { exist, newVocab, dupVocab, dupList, tagSet, oldErr, noTag,
            newErr: r.corrections.length - oldErr };
 }
 /* 真正写进去 */
-async function applyReport(r){
+async function applyReport(r, onStep){
   const now = new Date().toISOString();
   const p = await previewReport(r);
+  const total = p.newVocab.length + r.corrections.length; let done = 0;
+  const step = () => onStep && onStep(++done, total);
   const byExp = {}; p.exist.forEach(x => byExp[(x.expression||'').trim().toLowerCase()] = x);
 
   // ① 新词
   for (const v of p.newVocab)
     await q(sb.from('lang_items').insert({ lang:r.lang, expression:String(v.word).trim(),
       meaning: v.meaning || null, example: v.example || null, source:'report',
-      status:'flashcard_learning', success_streak:0, review_count:0 }), true);
+      status:'flashcard_learning', success_streak:0, review_count:0 }), true), step();
 
   // ② 纠错:按 (lang, tag) 归并 —— 整套设计的关键就在这几行
   for (const c of r.corrections){
@@ -702,6 +704,7 @@ async function applyReport(r){
         zh:c.zh || null, fixed:c.fixed || null, why:c.why || null,
         samples:[sample], hits:1, last_seen_at: now }), true);
     }
+    step();
   }
 
   // ③ A 组回写:考听懂
@@ -2824,103 +2827,116 @@ function openTextModal(title, text){
   m.querySelector('[data-mclose]').onclick = () => closeModal(false);
   m.querySelector('textarea').select();
 }
-/* 导入报告:粘贴 → 校验预览 → 确认写入 */
+/* 导入报告:粘贴 → 校验预览 → 逐条勾选 → 确认写入 */
 function openImportModal(){
   closeModal(false);
   document.body.insertAdjacentHTML('beforeend', `
-   <div class="modal-mask"><div class="modal" style="max-width:600px">
+   <div class="modal-mask"><div class="modal" style="max-width:640px">
     <div class="spread"><b>⊕ 导入练习报告</b><button class="ghost" data-mclose style="font-size:16px">✕</button></div>
     <div class="muted" style="font-size:12.5px;margin:6px 0 10px">
-      把 GPT 结束时给的那段贴进来。纯 JSON、\`\`\`json 代码块、REPORT_V1 标记包裹的,三种都认。</div>
-    <textarea class="small-in" id="rep-in" style="width:100%;height:200px;font-size:12px" placeholder="在这里粘贴…"></textarea>
-    <div id="rep-pre" class="note hidden" style="margin-top:10px"></div>
+      把练习结束时给的那段贴进来。纯 JSON、\`\`\`json 代码块、REPORT_V1 标记包裹的,三种都认。</div>
+    <textarea class="small-in" id="rep-in" style="width:100%;height:150px;font-size:12px" placeholder="在这里粘贴…"></textarea>
+    <div id="rep-pre" class="hidden" style="margin-top:10px"></div>
     <div class="row" style="margin-top:12px">
       <button class="primary" id="rep-check">校验并预览</button>
       <button class="ghost hidden" id="rep-go">确认写入</button>
     </div>
    </div></div>`);
-  const m = document.querySelector('.modal-mask');
-  m.querySelector('[data-mclose]').onclick = () => closeModal(false);
-  keepDraft(m.querySelector('#rep-in'), 'report-in');
-  let parsed = null;
-  m.querySelector('#rep-check').onclick = async () => {
-    const box = m.querySelector('#rep-pre'); box.classList.remove('hidden');
-    try { parsed = parseReport(m.querySelector('#rep-in').value); }
-    catch (e){ parsed = null; box.innerHTML = `<b style="color:var(--danger)">解析失败</b>
-      <pre style="font-size:11.5px;white-space:pre-wrap;margin:8px 0;font-family:ui-monospace,monospace">${esc(e.message)}</pre>
-      <div class="muted" style="font-size:12px">把上面这段贴回给 AI,让它照着改完重新输出一遍就行。<br>常见原因：字符串里有没转义的 " · 用了全角，或：当分隔符 · 多余的尾逗号。</div>`; return; }
-    let p;
-    try { p = await previewReport(parsed); }
-    catch (e){ box.innerHTML = `<b style="color:var(--danger)">预览时出错</b>
-      <pre style="font-size:11.5px;white-space:pre-wrap;margin:8px 0;font-family:ui-monospace,monospace">${esc(String(e && e.message || e))}</pre>
-      <div class="muted" style="font-size:12px">JSON 本身是好的,是页面这一步坏了。把这段截图给我。</div>`; return; }
-    box.innerHTML = `<b>✅ 格式校验通过</b>
-      <div style="margin-top:6px;font-size:13px">
-        ${esc(parsed.date)} · ${langZh(parsed.lang)}<br>
-        新词 <b>${p.newVocab.length}</b>${p.dupVocab?` <span class="muted">（${p.dupVocab} 个已存在,会跳过）</span>`:''}<br>
-        ${p.dupList.length?`<span class="muted" style="font-size:12px">跳过的：${p.dupList.map(esc).join('、')}</span><br>`:''}
-        纠错 <b>${parsed.corrections.length}</b>${p.oldErr?` <span class="muted">（其中 ${p.oldErr} 个是老问题,次数 +1）</span>`:''}<br>
-        考听懂回执 <b>${parsed.recognize.length}</b> · 考说出回执 <b>${parsed.produce.length}</b>
-        ${p.noTag?`<br><span style="color:var(--danger)">⚠️ 有 ${p.noTag} 条没写 tag,会归到「未分类」</span>`:''}
-        ${parsed.top_issue?`<div class="muted" style="margin-top:6px">最该改的：${esc(parsed.top_issue)}</div>`:''}
+  const mask = document.querySelector('.modal-mask');
+  mask.querySelector('[data-mclose]').onclick = () => closeModal(false);
+  keepDraft(mask.querySelector('#rep-in'), 'report-in');
+
+  let parsed = null, pv = null;
+  const keepV = new Set(), keepC = new Set();    // 勾中的下标 —— 默认全勾,重复的不勾
+  const box = () => mask.querySelector('#rep-pre');
+
+  /* 勾选清单:写进去之前你能一条条看、一条条取消 */
+  const draw = () => {
+    const dup = new Set(pv.dupList.map(x => x.trim().toLowerCase()));
+    box().innerHTML = `
+      <div class="note" style="max-height:46vh;overflow:auto">
+        <div class="spread"><b style="font-size:13px">✅ 解析成功 · ${esc(parsed.date)} · ${langZh(parsed.lang)}</b>
+          <span class="row" style="gap:6px">
+            <button class="ghost" data-all="1" style="font-size:11.5px">全选</button>
+            <button class="ghost" data-all="0" style="font-size:11.5px">全不选</button></span></div>
+        ${parsed.top_issue?`<div class="muted" style="font-size:12px;margin:4px 0 8px">最该改的：${esc(parsed.top_issue)}</div>`:''}
+
+        ${parsed.vocab.length?`<div style="margin-top:10px"><b style="font-size:12.5px">新词 (${parsed.vocab.length})</b></div>
+        ${parsed.vocab.map((v,n)=>{ const isDup = dup.has(String(v.word||'').trim().toLowerCase());
+          return `<div class="itemline" style="padding:5px 0;align-items:flex-start">
+            <button class="ghost" data-pv="${n}" style="flex:0 0 auto;font-size:14px;padding:0 8px 0 0">${keepV.has(n)?'☑':'☐'}</button>
+            <div style="flex:1;min-width:0">
+              <div class="exp" style="font-size:13.5px">${esc(v.word||'')}${isDup?' <span class="muted" style="font-size:11px">· 词库里已有</span>':''}</div>
+              <div class="muted" style="font-size:12px">${esc(v.meaning||'')}</div>
+            </div></div>`; }).join('')}`:''}
+
+        ${parsed.corrections.length?`<div style="margin-top:12px"><b style="font-size:12.5px">纠错 (${parsed.corrections.length})</b>
+          <span class="muted" style="font-size:11.5px">同 tag 会并进已有的那条,次数 +1</span></div>
+        ${parsed.corrections.map((c,n)=>{ const old = c.tag && pv.tagSet.has(c.tag);
+          return `<div class="itemline" style="padding:6px 0;align-items:flex-start">
+            <button class="ghost" data-pc="${n}" style="flex:0 0 auto;font-size:14px;padding:0 8px 0 0">${keepC.has(n)?'☑':'☐'}</button>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12.5px"><b>${esc(c.tag||'未分类')}</b>
+                <span class="muted">${esc(c.type||'')}</span>${old?' <span class="muted">· 老问题,次数 +1</span>':''}${!c.tag?' <span style="color:var(--danger)">· 没写 tag</span>':''}</div>
+              <div class="muted" style="font-size:12.5px;margin-top:2px">❌ ${esc(c.original||'')}</div>
+              <div style="font-size:12.5px">✅ ${esc(c.fixed||'')}</div>
+            </div></div>`; }).join('')}`:''}
+
+        ${parsed.patterns.length?`<div class="muted" style="font-size:12px;margin-top:12px">
+          句型 ${parsed.patterns.length} 条 —— 会存进报告存档,在「句型」区能看到（还没进复习队列）</div>`:''}
       </div>`;
-    m.querySelector('#rep-go').classList.remove('hidden');
+    mask.querySelectorAll('[data-pv]').forEach(b => b.onclick = () => {
+      const n = +b.dataset.pv; keepV.has(n) ? keepV.delete(n) : keepV.add(n); draw(); });
+    mask.querySelectorAll('[data-pc]').forEach(b => b.onclick = () => {
+      const n = +b.dataset.pc; keepC.has(n) ? keepC.delete(n) : keepC.add(n); draw(); });
+    mask.querySelectorAll('[data-all]').forEach(b => b.onclick = () => {
+      keepV.clear(); keepC.clear();
+      if (b.dataset.all === '1'){ parsed.vocab.forEach((_,n)=>keepV.add(n)); parsed.corrections.forEach((_,n)=>keepC.add(n)); }
+      draw(); });
+    const go = mask.querySelector('#rep-go');
+    go.classList.remove('hidden');
+    go.textContent = `确认写入（${keepV.size + keepC.size} 条）`;
+    go.disabled = (keepV.size + keepC.size) === 0;
   };
-  m.querySelector('#rep-go').onclick = async () => {
+
+  mask.querySelector('#rep-check').onclick = async () => {
+    box().classList.remove('hidden');
+    try { parsed = parseReport(mask.querySelector('#rep-in').value); }
+    catch (e){ parsed = null; box().innerHTML = `<div class="note"><b style="color:var(--danger)">解析失败</b>
+      <pre style="font-size:11.5px;white-space:pre-wrap;margin:8px 0;font-family:ui-monospace,monospace">${esc(String(e && e.message || e))}</pre>
+      <div class="muted" style="font-size:12px">把上面这段贴回给 AI,让它照着改完重新输出一遍就行。<br>常见原因：字符串里有没转义的 " · 用了全角，或：当分隔符 · 多余的尾逗号。</div></div>`; return; }
+    try { pv = await previewReport(parsed); }
+    catch (e){ box().innerHTML = `<div class="note"><b style="color:var(--danger)">预览时出错</b>
+      <pre style="font-size:11.5px;white-space:pre-wrap;margin:8px 0">${esc(String(e && e.message || e))}</pre>
+      <div class="muted" style="font-size:12px">JSON 是好的,是页面这一步坏了。把这段截图给我。</div></div>`; return; }
+    // 默认:词库里没有的才勾;纠错全勾
+    const dup = new Set(pv.dupList.map(x => x.trim().toLowerCase()));
+    keepV.clear(); keepC.clear();
+    parsed.vocab.forEach((v,n) => { if (!dup.has(String(v.word||'').trim().toLowerCase())) keepV.add(n); });
+    parsed.corrections.forEach((_,n) => keepC.add(n));
+    draw();
+  };
+
+  mask.querySelector('#rep-go').onclick = async () => {
     if (!parsed) return;
-    m.querySelector('#rep-go').disabled = true;
-    const p = await applyReport(parsed);
-    clearDraft('report-in');
-    closeModal(false);
-    toast(`收好了 · 新词 ${p.newVocab.length} · 纠错 ${parsed.corrections.length} 🌿`);
+    const go = mask.querySelector('#rep-go');
+    go.disabled = true; go.textContent = '写入中…';
+    const picked = { ...parsed,
+      vocab: parsed.vocab.filter((_,n) => keepV.has(n)),
+      corrections: parsed.corrections.filter((_,n) => keepC.has(n)) };
+    try {
+      await applyReport(picked, (done, total) => { go.textContent = `写入中… ${done}/${total}`; });
+    } catch (e){
+      go.disabled = false; go.textContent = '重试';
+      box().insertAdjacentHTML('afterbegin',
+        `<div class="note" style="border-color:var(--danger)"><b style="color:var(--danger)">写入中断</b>
+         <pre style="font-size:11.5px;white-space:pre-wrap;margin:6px 0">${esc(String(e && e.message || e))}</pre></div>`);
+      return;
+    }
+    clearDraft('report-in'); closeModal(false);
+    toast(`收好了 · 新词 ${picked.vocab.length} · 纠错 ${picked.corrections.length} 🌿`);
     VIEWS.lang();
   };
-}
-/* ⚠️ 陷阱卡:和词卡不一样 —— 你不是要「背住」这个错,
-   是要在下次说话前拦住自己。所以背面摆的是「你上次说错的原句」。 */
-function renderTrap(e, idx, total, next, back){
-  const zh  = langZh(e.lang);
-  const last = (e.samples||[]).slice(-1)[0]?.original || '';
-  const front = e.zh || e.tag;
-  document.body.insertAdjacentHTML('beforeend', `
-   <div class="modal-mask"><div class="modal" style="max-width:520px;text-align:center">
-    <div class="spread"><span class="chip">⚠️ 陷阱 · ${zh}</span>
-      <div class="row" style="gap:10px">${back?'<button class="ghost" data-undo style="font-size:12px">↩ 改上一张</button>':''}<span class="muted">${idx+1} / ${total}</span>
-      <button class="ghost" data-end style="font-size:12px">结束复习</button></div></div>
-    <div class="muted" style="font-size:12px;margin-top:14px">你犯过 ${e.hits} 次 · ${esc(e.tag)}</div>
-    <h2 style="margin:8px 0 4px;font-size:22px;line-height:1.4">${esc(front)}</h2>
-    <div class="muted" style="font-size:13px;margin-bottom:4px">说说看 —— 用${zh}怎么说?</div>
-    <div id="trap-back" class="hidden">
-      <div class="wave"></div>
-      <div style="font-size:19px;font-weight:600;margin:4px 0">✅ ${esc(e.fixed||'')} ${e.fixed?spkBtn(e.fixed, e.lang, 16):''}</div>
-      ${last?`<div class="note" style="margin:10px 0;text-align:left;font-size:13.5px">
-        <span class="muted" style="font-size:11.5px">⚠️ 你上次说的</span><br>${esc(last)}</div>`:''}
-      ${e.why?`<div class="muted" style="font-size:12.5px">${esc(e.why)}</div>`:''}
-    </div>
-    <button id="trap-flip" class="ghost" style="margin:10px 0 16px">翻面看答案 ↺</button>
-    <div class="row" style="justify-content:center;gap:10px">
-      <button data-t="wrong">还会错 ↻</button>
-      <button class="primary" data-t="right">这次对了 ✓</button>
-    </div>
-   </div></div>`);
-  const m = document.querySelector('.modal-mask');
-  m.addEventListener('click', ev => { if (ev.target === m){ m.remove(); route(); } });
-  m.querySelector('#trap-flip').onclick = ev => {
-    m.querySelector('#trap-back').classList.remove('hidden');
-    ev.currentTarget.style.display = 'none';
-    bindSpeak(m);                                    // 同上:要听自己点 🔊
-  };
-  m.querySelector('[data-end]').onclick = () => { m.remove(); toast('今天复习就到这 🌿'); route(); };
-  m.querySelector('[data-undo]') && (m.querySelector('[data-undo]').onclick = back);
-  m.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
-    const ok = b.dataset.t === 'right';
-    await q(sb.from('lang_errors').update({
-      success_streak: ok ? (e.success_streak||0) + 1 : 0,
-      last_reviewed_at: new Date().toISOString(),
-    }).eq('id', e.id), true);
-    await bumpCheckin(e.lang, 0);
-    next();
-  });
 }
 function startReview(list){
   let idx = 0;
