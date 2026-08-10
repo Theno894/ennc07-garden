@@ -17,11 +17,7 @@
 <script>
 /* 主题在样式生效前就定好,避免刷新时闪一下别的颜色 */
 (function(){ try{
-  var r = document.documentElement;
-  r.setAttribute('data-theme', localStorage.getItem('garden-theme') || 'indigo');
-  var m = localStorage.getItem('garden-dark') || 'auto';
-  var dark = m === 'dark' || (m === 'auto' && matchMedia('(prefers-color-scheme:dark)').matches);
-  if (dark) r.setAttribute('data-dark','');
+  document.documentElement.setAttribute('data-theme', localStorage.getItem('garden-theme') || 'indigo');
 }catch(e){} })();
 </script>
 <style>
@@ -47,36 +43,6 @@
   --accent:#9C4F38; --accent-soft:#EFE0D8; --signal:#355947;
 }
 
-/* ══ 暗色版 ══
-   不是把亮色反过来 —— 反相会让强调色沉进背景里。
-   每套都单独调:底色带一点本色系的味道,强调色反而要提亮,
-   而按钮上的字要从白翻成深色(浅色强调 + 白字 = 看不清)。 */
-[data-theme="indigo"][data-dark]{
-  --canvas:#15161C; --paper:#1D1F27; --paper-soft:#232631;
-  --ink:#E8E9EF; --subtle:#9A9DAC; --line:#31343F;
-  --accent:#8B93D8; --accent-soft:#252840; --signal:#A3AAC9;
-}
-[data-theme="teal"][data-dark]{
-  --canvas:#121818; --paper:#1A2121; --paper-soft:#20292A;
-  --ink:#E3EAE9; --subtle:#8FA09F; --line:#2C3736;
-  --accent:#6FAFB1; --accent-soft:#1B2E2E; --signal:#89B5A8;
-}
-[data-theme="mauve"][data-dark]{
-  --canvas:#191419; --paper:#221B23; --paper-soft:#29212B;
-  --ink:#EDE5EE; --subtle:#A395A6; --line:#382E3A;
-  --accent:#B590C4; --accent-soft:#2C2130; --signal:#B4A0BC;
-}
-[data-theme="clay"][data-dark]{
-  --canvas:#16150F; --paper:#1F1E17; --paper-soft:#26241C;
-  --ink:#EDEAE0; --subtle:#A19E92; --line:#35332A;
-  --accent:#D98B6E; --accent-soft:#33221B; --signal:#7FAF92;
-}
-/* 暗色下状态色和危险色都要提亮,否则在深底上是一团黑 */
-[data-dark]{
-  --grow:#C9A868; --done:#7FB894; --settle:#C79880; --wait:#8DAECB;
-  --seed:#A8ACB6; --release:#9A9A93; --danger:#E08A72;
-  --on-accent:#14151A;
-}
 :root{
   /* 状态色:四套主题共用,统一压低饱和度,只用来区分不用来抢眼 */
   --grow:#9A7B3F; --done:#4E7A5C; --settle:#8C6551; --wait:#5A7590;
@@ -128,6 +94,10 @@ h2.sec{font-family:var(--serif);font-weight:600;font-size:21px;margin:34px 0 14p
 .grid{display:grid;gap:14px}
 .g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
 .g3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.g-focus{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}
+.focus-card{padding:22px 24px;border-color:var(--accent);box-shadow:0 1px 0 var(--accent-soft),0 6px 20px -14px var(--accent)}
+.focus-title{font-family:var(--serif);font-size:clamp(19px,2.4vw,24px);font-weight:600;line-height:1.35;margin:10px 0 6px}
+.daystamp{font-size:12.5px;color:var(--subtle);letter-spacing:.04em}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px}
 .card h3{font-family:var(--serif);font-weight:600;font-size:17.5px;margin:6px 0}
 .card .desc{color:var(--ink2);font-size:14px}
@@ -311,6 +281,8 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   .top-right button{white-space:nowrap;padding:6px 10px;font-size:13px}
   .cap-grid{grid-template-columns:1fr}
   .g3{grid-template-columns:1fr}
+  .g-focus{grid-template-columns:1fr}
+  .focus-card{padding:18px 18px}
 }
 </style>
 </head>
@@ -320,7 +292,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-11b</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-11c</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right">
@@ -330,8 +302,6 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
         <option value="indigo">靛蓝</option><option value="teal">青灰</option>
         <option value="mauve">灰紫</option><option value="clay">陶土</option>
       </select>
-      <button class="ghost" id="theme-dark" aria-label="明暗模式" title="明暗模式"
-        style="font-size:13px;white-space:nowrap">自动</button>
       <button class="ghost" id="btn-setpass" title="设置密码">设密码</button>
       <button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
   </div>
@@ -1335,7 +1305,7 @@ VIEWS.today = async function(){
   const doneToday = acts.done || [];
   const notSnoozed = arr => arr.filter(x => !snoozed.includes(x.sid));
   const dueLang = (langAll||[]).filter(flashDue);
-  // 已放下 / 已收好的项目,不再往「此刻值得照料的」里推
+  // 已放下 / 已收好的项目,不再往今日待办里推
   const projCands = notSnoozed((projs||[]).filter(p => p.status==='growing' || p.status==='waiting')
     .map(p=>({t:'项目', title:p.name, sub:p.next_step||p.description||'', st:p.status, go:'proj', gid:p.id, sid:p.id})));
   const seedCands = notSnoozed((seeds||[]).map(e=>({t:e.kind, title:e.title||e.content.slice(0,18), sub:(e.content||'').slice(0,42), st:e.status, go:'grow', gid:e.id, sid:e.id})));
@@ -1404,85 +1374,71 @@ VIEWS.today = async function(){
   }
   const isDone = x => x.ro || doneToday.includes(x.sid) || taskDone.has(x.sid) || (x.go === 'lang' && langCleared);
   const doneCount = todo.filter(isDone).length;
-  const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" style="flex:1;text-align:left"><b>${label}</b><br><span class="muted" style="font-size:12px">${tip}</span></button>`;
+  const eBtn = (v,label,tip) => `<button data-energy="${v}" class="${energy===v?'primary':''}" title="${tip}" style="flex:1;padding:7px 4px;font-size:12.5px">${label}</button>`;
+  const dObj = new Date();
+  const dateZh = `${dObj.getMonth()+1} 月 ${dObj.getDate()} 日 · 星期${'日一二三四五六'[dObj.getDay()]}`;
+  const undoneAll = todo.filter(x => !isDone(x));
+  /* 今日重点:最紧急的临期待办 > 表达训练 > 第一条推荐。其余的照常列在下面,不藏起来 */
+  const focus = undoneAll.find(x => urgent.some(u => u.sid === x.sid))
+             || undoneAll.find(x => /表达训练|Day\s*\d/.test(x.title || ''))
+             || undoneAll[0] || null;
+  const rest  = undoneAll.filter(x => x !== focus);
+  const subOf = x => x.go === 'lang'
+      ? (langCleared ? '今天的词都复习完了 🌿' : `还有 ${dueLang.length} 个到期,点开继续`)
+      : (x.sub || '');
+  const goHint = g => g==='proj'?'看脉络 →':g==='grow'?'去整理 →':g==='lang'?'去复习 →':g==='write'?'去练字 →':'';
   $('#view').innerHTML = `
-    <div class="spread" style="align-items:flex-end">
-      <div>
-        <div class="doodle" style="margin-bottom:2px">
-          <svg viewBox="0 0 22 16" width="19" style="color:var(--mist)"><path d="M4 12c-2 0-3-1.4-3-3s1.3-3 3-3c.3-2.3 2.2-4 4.5-4C11 2 13 3.7 13.4 6c2.4-.3 4.6 1.4 4.6 3.6 0 1.3-1 2.4-2.4 2.4H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-          <svg viewBox="0 0 16 18" width="15" style="color:var(--sage,#4a6b52)"><path d="M8 17V7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M8 8C8 5 6 3 3 3c0 3 2 5 5 5z" fill="currentColor"/><path d="M8 9c0-2.6 1.8-4.4 4.4-4.4C12.4 7.2 10.6 9 8 9z" fill="currentColor" opacity=".72"/></svg>
-          <svg viewBox="0 0 16 15" width="14" style="color:var(--pink)"><path d="M8 13.5S1.5 9.6 1.5 5.4C1.5 3.2 3.2 1.5 5.2 1.5c1.2 0 2.2.6 2.8 1.5.6-.9 1.6-1.5 2.8-1.5 2 0 3.7 1.7 3.7 3.9C14.5 9.6 8 13.5 8 13.5z" fill="currentColor"/></svg>
-        </div>
-        <div class="eyebrow">${esc(greeting())}</div>
-        <h1 class="hero">今天的花园,只照料此刻需要的部分。</h1>
-        <div class="washi">新的一天,从浇一点水开始</div>
-      </div>
-      <div class="bean" style="flex:0 0 auto">
-        <svg viewBox="0 0 84 76" width="88" style="overflow:visible">
-          <ellipse cx="42" cy="36" rx="19" ry="23" fill="var(--trunk)"/>
-          <circle cx="35.5" cy="32" r="2.3" fill="var(--inkdeep)"/><circle cx="48.5" cy="32" r="2.3" fill="var(--inkdeep)"/>
-          <path d="M37 41c1.6 2.2 6.4 2.2 8 0" stroke="var(--inkdeep)" stroke-width="1.7" fill="none" stroke-linecap="round"/>
-          <path d="M23 32C18 27 14 26 11 27" stroke="var(--trunk)" stroke-width="3" fill="none" stroke-linecap="round"/>
-          <path d="M61 32c5-5 9-6 12-5" stroke="var(--trunk)" stroke-width="3" fill="none" stroke-linecap="round"/>
-          <path d="M35 58v12M49 58v12" stroke="var(--trunk)" stroke-width="3" stroke-linecap="round"/>
-          <path d="M73 22c0-2.6 2-4.6 4.4-4.6" stroke="var(--pink)" stroke-width="2" fill="none" stroke-linecap="round"/>
-          <path d="M8 22S4.5 19.6 4.5 17.4C4.5 16 5.6 15 7 15c.8 0 1.5.4 1.9 1 .4-.6 1.1-1 1.9-1 1.4 0 2.5 1 2.5 2.4C13.3 19.6 8 22 8 22z" fill="var(--pink)" opacity=".85"/>
-        </svg>
-      </div>
+    <div style="margin-bottom:16px">
+      <div class="eyebrow">${esc(greeting())}</div>
+      <h1 class="hero" style="margin:2px 0 4px">先照料今天最要紧的那一件。</h1>
+      <div class="daystamp">${dateZh}</div>
     </div>
-    <div class="wave"></div>
-    <p class="sub">不需要照顾整座花园,让一件事继续生长就好。</p>
-    <div class="grid g2">
-      <div class="card"><div class="muted doodle">今日能量
-        <svg viewBox="0 0 16 16" width="14" style="color:var(--yellow)"><circle cx="8" cy="8" r="3.4" fill="currentColor"/><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M12.8 3.2l-1.4 1.4M4.6 11.4l-1.4 1.4"/></g></svg></div>
-        <div class="row" style="margin-top:12px">${eBtn('low','低能量','适合轻轻整理')}${eBtn('mid','中等能量','可以稳定推进')}${eBtn('high','高能量','适合深度处理')}</div>
+    <div class="grid g-focus">
+      <div class="card focus-card${focus?' projcard':''}"${focus?` data-go="${focus.go}" data-gid="${focus.gid||''}" data-sid="${focus.sid||''}"`:''}>
+        ${focus ? `<div class="spread"><span class="muted" style="font-size:12.5px">今日重点 · ${esc(focus.t)}</span>${chip(focus.st)}</div>
+          <h3 class="focus-title">${esc(focus.title)}</h3>
+          ${subOf(focus)?`<div class="desc">${esc(subOf(focus))}</div>`:''}
+          <div class="row" style="margin-top:18px;gap:12px;align-items:center">
+            <button class="primary" data-done="${focus.sid}">✓ 完成</button>
+            ${focus.manual?`<button class="ghost" data-mdel="${focus.sid}" style="color:var(--danger)">删掉</button>`
+                          :`<button class="ghost" data-dismiss="${focus.sid}">今天先不看</button>`}
+            <span class="tool-hint muted" style="margin-left:auto">${goHint(focus.go)}</span>
+          </div>`
+        : `<div class="muted" style="font-size:12.5px">今日重点</div>
+          <h3 class="focus-title" style="color:var(--subtle)">${!energy?'先选一个今日能量':(todo.length?'今天该照料的都照料完了 🌿':'今天还没有事')}</h3>
+          <div class="desc">${!energy?'我就端上刚刚好的量 🌱':(todo.length?'剩下的时间是你的。':'去「随手记」写下第一句,或者点「生长」逛逛你的灵感。')}</div>`}
       </div>
-      <div class="card"><div class="spread"><div class="muted">语言 · 今日</div><a href="#lang" class="muted">去看看 →</a></div>
-        <div class="row" style="margin-top:14px">
+      <div class="card">
+        <div class="muted" style="font-size:12.5px">今日能量</div>
+        <div class="row" style="margin-top:9px;gap:6px">${eBtn('low','低','适合轻轻整理')}${eBtn('mid','中','可以稳定推进')}${eBtn('high','高','适合深度处理')}</div>
+        <div class="wave" style="margin:14px 0 10px"></div>
+        <div class="spread"><span class="muted" style="font-size:12.5px">语言 · 今日</span><a href="#lang" class="muted" style="font-size:12.5px">去看看 →</a></div>
+        <div class="row" style="margin-top:9px;flex-wrap:wrap;gap:6px">
           <a href="#lang"><span class="chip click ${en?'done':''}"><span class="dot"></span>英语 ${en?(en.items_added?`已收 ${en.items_added} 条`:'已浇过水'):'还没浇水'}</span></a>
           <a href="#lang"><span class="chip click ${ja?'done':''}"><span class="dot"></span>日语 ${ja?(ja.items_added?`已收 ${ja.items_added} 条`:'已浇过水'):'还没浇水'}</span></a>
         </div>
       </div>
     </div>
-    ${(()=>{ const x=(news||[]).filter(v=>(v.kind||'')==='x_radar').sort((a,b)=>b.date.localeCompare(a.date))[0];
-      if(!x) return '';
-      const its=x.items||[];
-      const todayD=todayStr();
-      const parseDL = s => parseDue(s);
-      return `<div class="card" style="margin-top:14px;padding:12px 16px">
-        <div class="spread"><span class="muted" style="font-size:13px">🛰 AI 圈今日 · ${esc(x.date)}</span>
-          ${x.full_md?`<button class="ghost" data-full="x_radar|${x.date}" style="font-size:12px">全部 →</button>`:''}</div>
-        <div style="margin-top:8px">
-        ${its.slice(0,6).map((i,k)=>{ const s=(i.summary||'')+' '+(i.title||'');
-          const dl=parseDL((s.match(/截止[^,，。;；]*/)||[])[0]);
-          const expired = dl && dl < todayD;
-          const icon = /额度|重置|恢复/.test(s)?'♻️' : /活动|优惠|免费|领取|福利/.test(s)?'🎁' : /发布|上线|更新|推出|新版|新模型/.test(s)?'🆕' : '·';
-          return `<div class="itemline" style="padding:6px 0;${expired?'opacity:.42':''}">
-            <div style="flex:1"><span style="margin-right:6px">${icon}</span><span class="${expired?'':'exp'}" style="font-weight:${expired?'400':'500'}">${esc(i.title)}</span>
-              ${i.summary?`<div class="muted" style="font-size:12.5px;margin-left:22px">${esc(i.summary.slice(0,60))}</div>`:''}</div>
-            <div class="row" style="gap:6px;flex:0 0 auto">
-              ${dl && !expired?`<span class="chip" style="background:var(--yellow);border-color:var(--yellow);color:var(--inkdeep);font-size:11px">限时</span>`:''}
-              ${expired?'<span class="muted" style="font-size:11px">已过期</span>'
-                : dl ? `<button class="ghost" data-t2add="${esc(i.title)}" data-due="${dl}" style="font-size:11.5px">＋待办</button>`
-                     : `<button class="ghost" data-x2t="${esc(i.title)}" style="font-size:11.5px">＋今天</button>`}
-            </div></div>`; }).join('')}
-        </div></div>`; })()}
 
-    <div class="spread" style="margin:26px 0 8px"><h2 class="sec" style="margin:0">此刻值得照料的</h2>
-      ${energy ? `<span class="muted">按 ${energyLabel} · 已完成 ${doneCount}/${todo.length}</span>` : ''}</div>
+    <div class="spread" style="margin:24px 0 8px"><h2 class="sec" style="margin:0">接下来</h2>
+      ${energy ? `<span class="muted" style="font-size:12.5px">按${energyLabel} · 已完成 ${doneCount}/${todo.length}</span>` : ''}</div>
     ${energy==='low' && !urgent.length ? `<div class="note" style="margin-bottom:12px"><div class="muted">今天没有非做不可的事 —— 休息也是照料 🌙</div></div>` : ''}
     ${energy==='low' && urgent.length ? `<div class="muted" style="margin-bottom:10px;font-size:12.5px">低能量,只端逾期和今天到期的。其余的在<a href="#projects">待办</a>里等你</div>` : ''}
     <div class="row" style="margin-bottom:6px"><input class="small-in" id="todo-in" placeholder="今天还有什么事?写下来…">
       <button id="todo-add">＋ 待办</button><button id="todo-done">✓ 已做</button></div>
-    <div class="muted" style="margin-bottom:14px;font-size:12px">「＋ 待办」只管今天 ·「✓ 已做」已经做完的 · 要带截止日期的去<a href="#projects">待办</a>写</div>
-    ${(()=>{ const undone = todo.filter(x=>!isDone(x)), fin = todo.filter(x=>isDone(x));
-      const cards = (!energy && !todo.length)
-        ? '<div class="dashed" style="padding:22px;text-align:center"><div class="desc">先在上面选一个「今日能量」<br><span class="muted" style="font-size:13px">我就端上刚刚好的量 🌱</span></div></div>'
-        : (undone.map((x,i)=>{ const isL = x.go==='lang'; const sub = isL ? (langCleared ? '今天的词都复习完了 🌿' : `还有 ${dueLang.length} 个到期,点开继续`) : (x.sub||''); return `<div class="card projcard" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}"><div class="spread"><span class="muted">0${i+1} · ${esc(x.t)}</span>${chip(x.st)}</div>
-          <h3>${esc(x.title)}</h3><div class="desc">${esc(sub)}</div>
-          <div class="spread" style="margin-top:12px"><div class="row" style="gap:12px"><button data-done="${x.sid}" style="padding:2px 0;font-size:12px">✓ 完成</button>${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="padding:2px 0;font-size:12px;color:var(--danger)">删掉</button>`:`<button class="ghost" data-dismiss="${x.sid}" style="padding:2px 0;font-size:12px">今天先不看</button>`}</div><span class="tool-hint muted">${x.go==='proj'?'看脉络 →':x.go==='grow'?'去整理 →':x.go==='lang'?'去复习 →':''}</span></div></div>`; }).join('')
-          || (fin.length ? '<div class="dashed" style="padding:20px;text-align:center"><div class="muted">今天该照料的都照料完了 🌿</div></div>'
-                         : '<div class="card"><div class="desc">今天没有待办。去「随手记」写下第一句,或点「生长」逛逛你的灵感。</div></div>'));
+    <div class="muted" style="margin-bottom:12px;font-size:12px">「＋ 待办」只管今天 ·「✓ 已做」已经做完的 · 要带截止日期的去<a href="#projects">待办</a>写</div>
+    ${(()=>{ const fin = todo.filter(x=>isDone(x));
+      const cards = rest.length ? `<div class="card" style="padding:6px 16px">
+          ${rest.map(x => `<div class="itemline click" data-go="${x.go}" data-gid="${x.gid||''}" data-sid="${x.sid||''}" style="padding:9px 0">
+            <div style="flex:1;min-width:0"><div class="exp" style="font-weight:500">${esc(x.title)}</div>
+              <div class="muted" style="font-size:12px">${esc(x.t)}${subOf(x)?' · '+esc(subOf(x)):''}</div></div>
+            <div class="row" style="gap:8px;flex:0 0 auto">
+              <button class="ghost" data-done="${x.sid}" style="font-size:11.5px">✓ 完成</button>
+              ${x.manual?`<button class="ghost" data-mdel="${x.sid}" style="font-size:11.5px;color:var(--danger)">×</button>`
+                        :`<button class="ghost" data-dismiss="${x.sid}" style="font-size:11.5px">今天先不看</button>`}
+            </div></div>`).join('')}
+        </div>`
+        : (fin.length ? '' : (energy ? '' : '<div class="dashed" style="padding:18px;text-align:center"><div class="muted" style="font-size:13px">选好能量,我就把今天该做的排出来 🌱</div></div>'));
       // 能被「归成项目」搬走的:自己加的、项目待办、项目记录。其他(语言复习/项目卡本身)不动
       const canGroup = x => !x.synth && (x.manual || /^(task|note)-/.test(String(x.sid||'')));
       // 一行的样子
@@ -1525,9 +1481,33 @@ VIEWS.today = async function(){
             <button class="primary" data-gmake ${gSel.size?'':'disabled'} style="font-size:12.5px">把选中的 ${gSel.size} 条归成一个项目</button>
           </div>` : ''}
       </div>` : '';
-      return `<div class="grid g3">${cards}</div>${list}`; })()}
+      return `${cards}${list}`; })()}
     <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 突破了 ${winsToday.length} 件`:''}${(en||ja)?` · 浇过语言的水`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
-    <h2 class="sec">邮件早报</h2>
+    <h2 class="sec">AI 动态</h2>
+    ${(()=>{ const x=(news||[]).filter(v=>(v.kind||'')==='x_radar').sort((a,b)=>b.date.localeCompare(a.date))[0];
+      if(!x) return '';
+      const its=x.items||[];
+      const todayD=todayStr();
+      const parseDL = s => parseDue(s);
+      return `<div class="card" style="margin-top:0;padding:12px 16px">
+        <div class="spread"><span class="muted" style="font-size:13px">AI 动态 · ${esc(x.date)}</span>
+          ${x.full_md?`<button class="ghost" data-full="x_radar|${x.date}" style="font-size:12px">全部 →</button>`:''}</div>
+        <div style="margin-top:8px">
+        ${its.slice(0,6).map((i,k)=>{ const s=(i.summary||'')+' '+(i.title||'');
+          const dl=parseDL((s.match(/截止[^,，。;；]*/)||[])[0]);
+          const expired = dl && dl < todayD;
+          const icon = /额度|重置|恢复/.test(s)?'♻️' : /活动|优惠|免费|领取|福利/.test(s)?'🎁' : /发布|上线|更新|推出|新版|新模型/.test(s)?'🆕' : '·';
+          return `<div class="itemline" style="padding:6px 0;${expired?'opacity:.42':''}">
+            <div style="flex:1"><span style="margin-right:6px">${icon}</span><span class="${expired?'':'exp'}" style="font-weight:${expired?'400':'500'}">${esc(i.title)}</span>
+              ${i.summary?`<div class="muted" style="font-size:12.5px;margin-left:22px">${esc(i.summary.slice(0,60))}</div>`:''}</div>
+            <div class="row" style="gap:6px;flex:0 0 auto">
+              ${dl && !expired?`<span class="chip" style="background:var(--yellow);border-color:var(--yellow);color:var(--inkdeep);font-size:11px">限时</span>`:''}
+              ${expired?'<span class="muted" style="font-size:11px">已过期</span>'
+                : dl ? `<button class="ghost" data-t2add="${esc(i.title)}" data-due="${dl}" style="font-size:11.5px">＋待办</button>`
+                     : `<button class="ghost" data-x2t="${esc(i.title)}" style="font-size:11.5px">＋今天</button>`}
+            </div></div>`; }).join('')}
+        </div></div>`; })()}
+    <h2 class="sec">邮件</h2>
     <div class="${b?'card':'note'}">
       ${b ? `<div class="spread"><b>${esc(b.date)} · 重要邮件 ${b.important_count} 封</b>
                ${(b.items||[]).length?'<span class="muted" style="font-size:12px">点＋待办就不会忘</span>':''}</div>
@@ -1541,9 +1521,9 @@ VIEWS.today = async function(){
     </div>
 
     ${(()=>{ const n=(news||[]).filter(x=>(x.kind||'news')==='news').sort((a,b)=>b.date.localeCompare(a.date))[0];
-      if(!n) return `<h2 class="sec">今日播报</h2><div class="note">播报还没送到。新闻会在每天早上自动写进来。</div>`;
+      if(!n) return `<h2 class="sec">全球机会晨报</h2><div class="note">播报还没送到。新闻会在每天早上自动写进来。</div>`;
       const its=n.items||[], ops=n.opportunities||[];
-      return `<h2 class="sec">今日播报</h2>
+      return `<h2 class="sec">全球机会晨报</h2>
         <div class="card">
           <div class="spread"><span class="muted">📰 ${esc(n.date)}</span>
             <div class="row" style="gap:8px">${n.term?`<span class="chip">📖 ${esc(n.term)}</span>`:''}${n.full_md?`<button class="ghost" data-full="news|${n.date}" style="font-size:12px">看全文 →</button>`:''}</div></div>
@@ -1553,7 +1533,7 @@ VIEWS.today = async function(){
           ${ops.length?`<div class="muted" style="margin-top:12px;font-size:12.5px">💡 机会雷达</div>${ops.slice(0,3).map(o=>`<div class="desc" style="font-size:13px;margin-top:4px">· ${esc(o)}</div>`).join('')}`:''}
         </div>`; })()}
 
-    <h2 class="sec">照料自己</h2>
+    <h2 class="sec">结束今天之前</h2>
     <div class="grid g2">
       <div class="card">
         <div class="spread">
@@ -1630,7 +1610,7 @@ VIEWS.today = async function(){
     const sid = b.dataset.done;
     const was = (acts.done||[]).includes(sid) || taskDone.has(sid);
     const dn = was ? (acts.done||[]).filter(x=>x!==sid) : [ ...(acts.done||[]), sid ];
-    if (!was){ celebrate(b, ['✦','✧','🌿','✦']); bounce(document.querySelector('.bean'), 'cheer'); }
+    if (!was){ celebrate(b, ['✦','✧','✓']); }
     // 是真的待办就同步回 project_tasks(撤销也会一起撤)
     if (sid.startsWith('task-')){
       const tid = sid.slice(5);
@@ -1741,7 +1721,7 @@ VIEWS.today = async function(){
     toast('今天先不看它，明天再回来 🌙'); route();
   });
   document.querySelectorAll('[data-go]').forEach(c => c.onclick = (ev) => {
-    if (ev.target.closest('[data-dismiss]') || ev.target.closest('[data-done]')) return;
+    if (ev.target.closest('[data-dismiss]') || ev.target.closest('[data-done]') || ev.target.closest('[data-mdel]')) return;
     const g = c.dataset.go;
     if (g === 'proj'){ location.hash = '#projects'; setTimeout(() => openProject(c.dataset.gid), 600); }
     else if (g === 'lang'){ startReviewQueue(c.dataset.sid); }
@@ -3301,26 +3281,11 @@ $('#btn-verify').onclick = verifyCode;
 $('#login-code').addEventListener('keydown', e => { if (e.key==='Enter') verifyCode(); });
 /* 主题:切了立刻生效,记在本地,刷新和切页都还在 */
 (function(){
-  const sel = $('#theme-pick'), btn = $('#theme-dark'); if (!sel) return;
-  const R = document.documentElement;
-  const get = (k,d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
-  const set = (k,v) => { try { localStorage.setItem(k,v); } catch {} };
-  const LABEL = { auto:'自动', light:'亮色', dark:'暗色' };
-  let hue = get('garden-theme','indigo'), mode = get('garden-dark','auto');
-  const mq = matchMedia('(prefers-color-scheme:dark)');
-  const paint = () => {
-    R.setAttribute('data-theme', hue);
-    const dark = mode === 'dark' || (mode === 'auto' && mq.matches);
-    dark ? R.setAttribute('data-dark','') : R.removeAttribute('data-dark');
-    if (btn) btn.textContent = LABEL[mode];
-  };
-  sel.value = hue; paint();
-  sel.onchange = () => { hue = sel.value; set('garden-theme',hue); paint(); };
-  if (btn) btn.onclick = () => {                      // 自动 → 亮 → 暗 → 自动
-    mode = mode === 'auto' ? 'light' : mode === 'light' ? 'dark' : 'auto';
-    set('garden-dark', mode); paint();
-  };
-  mq.addEventListener && mq.addEventListener('change', () => { if (mode === 'auto') paint(); });
+  const sel = $('#theme-pick'); if (!sel) return;
+  const get = () => { try { return localStorage.getItem('garden-theme') || 'indigo'; } catch { return 'indigo'; } };
+  const apply = t => document.documentElement.setAttribute('data-theme', t);
+  sel.value = get(); apply(sel.value);
+  sel.onchange = () => { apply(sel.value); try { localStorage.setItem('garden-theme', sel.value); } catch {} };
 })();
 $('#btn-setpass').onclick = setPassword;
 $('#btn-logout').onclick = async () => { await sb?.auth.signOut(); toast('下次见'); };
