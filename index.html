@@ -309,7 +309,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-12a</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-13a</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right">
@@ -498,7 +498,10 @@ function keepDraft(el, key){
 /* 清掉草稿,并且在用户重新打字之前,不再写回 */
 function clearDraft(key){
   localStorage.removeItem('garden-draft:' + key);
-  const r = draftReg.get(key); if (r) r.off = true;
+  const r = draftReg.get(key);
+  /* ⚠️ 只删 localStorage 不够 —— 弹窗类的框不会重新渲染,字会留在里面,
+     于是「刚保存的那条」既在上面的列表里,又还躺在输入框里。一起清掉。 */
+  if (r){ r.off = true; if (r.el && r.el.isConnected) r.el.value = r.base || ''; }
 }
 
 /* ===== 待办:零散待办 与 项目内待办 共用一套逻辑 =====
@@ -1006,7 +1009,7 @@ function showExamPrompt(txt){
   m.querySelector('[data-mclose]').onclick = () => m.remove();
 }
 
-/* 邮件早报 / X 雷达 / 随手记 上的「＋待办」都走这里 */
+/* 邮件早报 / X 雷达 / 生长页 上的「＋待办」都走这里 */
 function bindTodoAdders(after){
   document.querySelectorAll('[data-t2add]').forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation(); ev.preventDefault();
@@ -1043,7 +1046,7 @@ const STATUS_ZH = {seed:'待处理', growing:'正在生长', waiting:'等待中'
 const chip = st => `<span class="chip ${st}"><span class="dot"></span>${STATUS_ZH[st]||st}</span>`;
 
 /* ================= 导航与路由 ================= */
-const TABS = [ ['today','今日','今'], ['capture','随手记','＋'], ['grow','生长','芽'], ['projects','项目','进'], ['lang','语言','语'], ['create','创作','作'], ['review','回顾','看'] ];
+const TABS = [ ['today','今日','今'], ['grow','生长','芽'], ['projects','项目','进'], ['lang','语言','语'], ['create','创作','作'], ['review','回顾','看'] ];
 function renderNav(){
   const cur = location.hash.replace('#','') || 'today';
   $('#nav-desk').innerHTML = TABS.map(([id,name]) => `<a href="#${id}" class="${cur===id?'on':''}">${name}</a>`).join('');
@@ -1260,6 +1263,7 @@ const SKELETON = `<div class="skel">
 async function route(){
   if (!session) return;
   const cur = location.hash.replace('#','') || 'today';
+  if (cur === 'capture'){ location.replace('#grow'); return; }   // 随手记已并进生长页,老链接不摔
   if (cur === 'write') return openWrite();          // 临帖:全屏接管,不走标签栏
   if (document.body.classList.contains('writing')){
     document.body.classList.remove('writing');
@@ -1333,7 +1337,6 @@ VIEWS.today = async function(){
     [{ t:'临帖', title:'今天练字', sub:'硬笔行书 · 一页 24 个格子', st:'growing', go:'write', gid:'', sid:'write' }];
   const interleave = arrs => { const out=[]; for(let i=0;out.length<50;i++){ let any=false; for(const a of arrs){ if(a[i]){ out.push(a[i]); any=true; } } if(!any) break; } return out; };
   const energyNeed = {low:2, mid:4, high:6}[energy] || 4;
-  const energyLabel = {low:'低能量',mid:'中等能量',high:'高能量'}[energy] || '';
   // ——— 临期待办:每次都实时算(中途加的也会出现),不进 daily_state 缓存 ———
   // 低能量只端「逾期 + 今天到期」;中能量加上三天内;高能量再加项目/种子/语言
   const pjName = {}; (projs||[]).forEach(p => pjName[p.id] = p.name);
@@ -1396,6 +1399,7 @@ VIEWS.today = async function(){
   /* 今日重点:最紧急的临期待办 > 表达训练 > 第一条推荐。其余的照常列在下面,不藏起来 */
   const focus = undoneAll.find(x => urgent.some(u => u.sid === x.sid))
              || undoneAll.find(x => /表达训练|Day\s*\d/.test(x.title || ''))
+             || undoneAll.find(x => !x.manual)     /* 随手加的小事排最后,别顶掉真正的重点 */
              || undoneAll[0] || null;
   const rest  = undoneAll.filter(x => x !== focus);
   const subOf = x => x.go === 'lang'
@@ -1404,8 +1408,7 @@ VIEWS.today = async function(){
   const goHint = g => g==='proj'?'看脉络 →':g==='grow'?'去整理 →':g==='lang'?'去复习 →':g==='write'?'去练字 →':'';
   $('#view').innerHTML = `
     <div style="margin-bottom:16px">
-      <div class="eyebrow">${esc(greeting())}</div>
-      <h1 class="hero" style="margin:2px 0 4px">先照料今天最要紧的那一件。</h1>
+      <h1 class="hero" style="margin:0">${esc(greeting())}</h1>
       <div class="daystamp">${(()=>{const d=new Date();return (d.getMonth()+1)+'月'+d.getDate()+'日 '+['周日','周一','周二','周三','周四','周五','周六'][d.getDay()];})()}</div>
     </div>
     <div class="grid g-focus">
@@ -1421,7 +1424,7 @@ VIEWS.today = async function(){
           </div>`
         : `<div class="muted" style="font-size:12.5px">今日重点</div>
           <h3 class="focus-title" style="color:var(--subtle)">${!energy?'先选一个今日能量':(todo.length?'今天该照料的都照料完了 🌿':'今天还没有事')}</h3>
-          <div class="desc">${!energy?'我就端上刚刚好的量 🌱':(todo.length?'剩下的时间是你的。':'去「随手记」写下第一句,或者点「生长」逛逛你的灵感。')}</div>`}
+          <div class="desc">${!energy?'我就端上刚刚好的量 🌱':(todo.length?'剩下的时间是你的。':'去「生长」写下第一句。')}</div>`}
       </div>
       <div class="card">
         <div class="muted" style="font-size:12.5px">今日能量</div>
@@ -1435,8 +1438,7 @@ VIEWS.today = async function(){
       </div>
     </div>
 
-    <div class="spread" style="margin:24px 0 8px"><h2 class="sec" style="margin:0">接下来</h2>
-      ${energy ? `<span class="muted" style="font-size:12.5px">按${energyLabel} · 已完成 ${doneCount}/${todo.length}</span>` : ''}</div>
+    <h2 class="sec" style="margin:24px 0 8px">接下来</h2>
     ${energy==='low' && !urgent.length ? `<div class="note" style="margin-bottom:12px"><div class="muted">今天没有非做不可的事 —— 休息也是照料 🌙</div></div>` : ''}
     ${energy==='low' && urgent.length ? `<div class="muted" style="margin-bottom:10px;font-size:12.5px">低能量,只端逾期和今天到期的。其余的在<a href="#projects">待办</a>里等你</div>` : ''}
     <div class="row" style="margin-bottom:6px"><input class="small-in" id="todo-in" placeholder="今天还有什么事?写下来…">
@@ -1497,20 +1499,23 @@ VIEWS.today = async function(){
           </div>` : ''}
       </div>` : '';
       return `${cards}${list}`; })()}
-    <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 突破了 ${winsToday.length} 件`:''}${(en||ja)?` · 浇过语言的水`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
-    <h2 class="sec">AI 动态</h2>
+    <div class="muted" style="margin-top:14px;font-size:13px">🌿 今天:完成 ${doneCount} 件${winsToday.length?` · 突破了 ${winsToday.length} 件`:''}${seedsToday.length?` · 收了 ${seedsToday.length} 颗种子`:''}${gratItems.length?` · 种下 ${gratItems.filter(Boolean).length} 颗感谢`:''}</div>
     ${(()=>{ const x=(news||[]).filter(v=>(v.kind||'')==='x_radar').sort((a,b)=>b.date.localeCompare(a.date))[0];
       if(!x) return '';
       const its=x.items||[];
       const todayD=todayStr();
       const parseDL = s => parseDue(s);
-      return `<div class="card" style="margin-top:0;padding:12px 16px">
-        <div class="spread"><span class="muted" style="font-size:13px">AI 动态 · ${esc(x.date)}</span>
+      return `<h2 class="sec">AI 动态</h2>
+        <div class="card" style="padding:12px 16px">
+        <div class="spread"><span class="muted" style="font-size:13px">${esc(x.date)}</span>
           ${x.full_md?`<button class="ghost" data-full="x_radar|${x.date}" style="font-size:12px">全部 →</button>`:''}</div>
         <div style="margin-top:8px">
-        ${its.slice(0,6).map((i,k)=>{ const s=(i.summary||'')+' '+(i.title||'');
-          const dl=parseDL((s.match(/截止[^,，。;；]*/)||[])[0]);
-          const expired = dl && dl < todayD;
+        ${(()=>{ const withDL = its.map(i=>{ const t=(i.summary||'')+' '+(i.title||'');
+            return { i, dl: parseDL((t.match(/截止[^,，。;；]*/)||[])[0]) }; });
+          const live = withDL.filter(v=>!(v.dl && v.dl < todayD));
+          const gone = withDL.length - live.length;
+          return live.slice(0,6).map(({i,dl})=>{ const s=(i.summary||'')+' '+(i.title||'');
+          const expired = false;
           const icon = /额度|重置|恢复/.test(s)?'♻️' : /活动|优惠|免费|领取|福利/.test(s)?'🎁' : /发布|上线|更新|推出|新版|新模型/.test(s)?'🆕' : '·';
           return `<div class="itemline" style="padding:6px 0;${expired?'opacity:.42':''}">
             <div style="flex:1"><span style="margin-right:6px">${icon}</span><span class="${expired?'':'exp'}" style="font-weight:${expired?'400':'500'}">${esc(i.title)}</span>
@@ -1520,23 +1525,24 @@ VIEWS.today = async function(){
               ${expired?'<span class="muted" style="font-size:11px">已过期</span>'
                 : dl ? `<button class="ghost" data-t2add="${esc(i.title)}" data-due="${dl}" style="font-size:11.5px">＋待办</button>`
                      : `<button class="ghost" data-x2t="${esc(i.title)}" style="font-size:11.5px">＋今天</button>`}
-            </div></div>`; }).join('')}
+            </div></div>`; }).join('')
+          + (gone?`<div class="muted" style="font-size:12px;padding-top:6px">另有 ${gone} 条已过期,不用管了</div>`:'')
+          + (!live.length?`<div class="muted" style="font-size:12.5px;padding:4px 0">今天没有还在有效期内的动态</div>`:''); })()}
         </div></div>`; })()}
-    <h2 class="sec">邮件</h2>
-    <div class="${b?'card':'note'}">
-      ${b ? `<div class="spread"><b>${esc(b.date)} · 重要邮件 ${b.important_count} 封</b>
+    ${!b ? '' : `<h2 class="sec">邮件</h2>
+    <div class="card">
+      <div class="spread"><b>${esc(b.date)} · 重要邮件 ${b.important_count} 封</b>
                ${(b.items||[]).length?'<span class="muted" style="font-size:12px">点＋待办就不会忘</span>':''}</div>
              ${(b.items||[]).length
                ? (b.items||[]).map(it=>`<div class="itemline" style="padding:7px 0">
                    <div style="flex:1"><div class="exp" style="font-weight:500">${esc(it.from||'')}${it.subject?' · '+esc(it.subject):''}</div>
                      ${it.action?`<div class="muted" style="font-size:12.5px">${esc(it.action)}</div>`:''}</div>
                    <button class="ghost" data-t2add="${esc(it.action||it.subject||it.from||'')}" style="font-size:11.5px;flex:0 0 auto">＋待办</button></div>`).join('')
-               : `<div class="desc" style="margin-top:8px;white-space:pre-wrap">${esc(b.summary_md||'')}</div>`}`
-          : `早报还没送到过。每天早上 9 点会扫一遍邮箱,把值得看的放在这里。`}
-    </div>
+               : `<div class="desc" style="margin-top:8px;white-space:pre-wrap">${esc(b.summary_md||'')}</div>`}
+    </div>`}
 
     ${(()=>{ const n=(news||[]).filter(x=>(x.kind||'news')==='news').sort((a,b)=>b.date.localeCompare(a.date))[0];
-      if(!n) return `<h2 class="sec">全球机会晨报</h2><div class="note">播报还没送到。新闻会在每天早上自动写进来。</div>`;
+      if(!n) return '';
       const its=n.items||[], ops=n.opportunities||[];
       return `<h2 class="sec">全球机会晨报</h2>
         <div class="card">
@@ -1758,86 +1764,6 @@ async function startReviewQueue(startId){
 }
 
 /* ================= 捕捉 ================= */
-VIEWS.capture = async function(){
-  const recent = await q(sb.from('entries').select('*').order('created_at',{ascending:false}).limit(5)) || [];
-  const KINDS = ['灵感','学习','读书','项目','生活', ...LANGS.map(l=>l.zh)];
-  // 已经记过的书名(从 tags 里收集,去重、最近的在前)
-  const books = [...new Set((await q(sb.from('entries').select('tags,created_at').eq('kind','读书').order('created_at',{ascending:false}), true) || [])
-    .flatMap(e => (e.tags||[]).filter(t => t.startsWith('《'))))].slice(0,12);
-  $('#view').innerHTML = `
-    <div class="eyebrow">随手记</div>
-    <h1 class="hero">只需要说一次,花园会先保留原句</h1>
-    <p class="sub">选择只是第一层整理;英语/日语会直接落进语言那边。</p>
-    <div class="cap-grid">
-      <div class="card">
-        <textarea id="cap-text" placeholder="写下一句话。它可以是想法、进展、身体感受,或刚学到的一句表达……"></textarea>
-        <div class="row" style="margin:14px 0">${KINDS.map(k=>`<span class="chip click" data-kind="${k}">${k}</span>`).join('')}</div>
-        <div id="book-box" class="hidden" style="margin-bottom:12px">
-          <input class="small-in" id="book-in" placeholder="书名(会记在这条下面)" style="width:100%">
-          ${books.length?`<div class="row" style="margin-top:8px">${books.map(b=>`<span class="chip click" data-book="${esc(b)}">${esc(b)}</span>`).join('')}</div>`:'<div class="muted" style="margin-top:6px;font-size:12.5px">第一本书,输入后以后就能一点即选 📖</div>'}
-        </div>
-        <div class="spread"><span class="muted" id="cap-hint">写点什么,我猜猜它属于哪里</span><button class="primary" id="cap-save">种进花园</button></div>
-      </div>
-      <div class="card"><div class="muted">最近留下的原句</div>
-        ${recent.map(e=>`<div class="itemline click" data-seed="${e.id}">
-          <div style="flex:1"><div class="muted">${esc(e.kind)} · ${fmtMD(e.occurred_on)}</div><div class="desc">${esc((e.title||e.content).slice(0,42))}</div></div>
-          <div class="row" style="gap:8px;flex:0 0 auto">${chip(e.status)}
-            <button class="ghost" data-t2add="${esc((e.title||e.content).slice(0,60))}" style="font-size:11.5px" title="这其实是件要做的事">＋待办</button></div>
-        </div>`).join('') || '<p class="muted" style="margin-top:10px">还没有记录</p>'}
-      </div>
-    </div>`;
-  let kind = null;
-  const chips = document.querySelectorAll('[data-kind]');
-  const guess = t => {
-    if (/[぀-ヿ]/.test(t)) return '日语';
-    const ascii = (t.match(/[a-zA-Z\s'.,!?-]/g)||[]).length;
-    if (t.length > 4 && ascii / t.length > 0.7) return '英语';
-    if (/项目|上线|进度|交付|部署/.test(t)) return '项目';
-    if (/看了|读到|书里|这本书|作者/.test(t)) return '读书';
-    if (/学到|复习|背|读了|课/.test(t)) return '学习';
-    if (/吃|睡|散步|家|买|身体/.test(t)) return '生活';
-    return '灵感';
-  };
-  const syncChips = () => {
-    chips.forEach(c => c.classList.toggle('sel', c.dataset.kind === kind));
-    $('#book-box').classList.toggle('hidden', kind !== '读书');
-  };
-  chips.forEach(c => c.onclick = () => { kind = c.dataset.kind; syncChips(); if (kind==='读书') $('#book-in').focus(); });
-  document.querySelectorAll('[data-book]').forEach(b => b.onclick = () => {
-    $('#book-in').value = b.dataset.book;
-    document.querySelectorAll('[data-book]').forEach(x => x.classList.toggle('sel', x === b));
-  });
-  keepDraft($('#book-in'), 'book');
-  document.querySelectorAll('[data-seed]').forEach(el => el.onclick = () => openSeed(el.dataset.seed));
-  bindTodoAdders();                       // 「＋待办」:这句其实是件要做的事
-  keepDraft($('#cap-text'), 'capture');   // 没保存的字不会丢
-  $('#cap-text').addEventListener('input', e => { if (!kind) { $('#cap-hint').textContent = '看起来像:' + guess(e.target.value); } });
-  $('#cap-save').onclick = async () => {
-    const text = $('#cap-text').value.trim();
-    if (!text) return toast('先写点什么');
-    celebrate($('#cap-save'), ['🌱','✦','✧','✦']);
-    const k = kind || guess(text);
-    if (k === '英语' || k === '日语'){
-      const lang = langCode(k) || 'en';
-      const { data: ins } = await sb.from('lang_items').insert({ lang, expression: text, source: 'manual' }).select().single();
-      await bumpCheckin(lang, 1);
-      toast(k + '表达已收进温室，AI 补释义中… 🌱');
-      // 后台补释义(不阻塞)
-      if (ins) sb.functions.invoke('garden-ai', { body:{ mode:'lookup', expression: text, lang, direction:'forward' } })
-        .then(({ data }) => { if (data?.card){ const c=data.card; const meaning=[c.pron,c.pos,c.meaning].filter(Boolean).join(' '); const example=[c.example,c.example_cn].filter(Boolean).join(' / '); sb.from('lang_items').update({ meaning: meaning||null, example: example||null }).eq('id', ins.id); } })
-        .catch(()=>{});
-    } else {
-      const tags = [];
-      if (k === '读书'){
-        let bk = ($('#book-in')?.value||'').trim();
-        if (bk){ if (!bk.startsWith('《')) bk = '《' + bk.replace(/[《》]/g,'') + '》'; tags.push(bk); }
-      }
-      await q(sb.from('entries').insert({ kind: k, content: text, title: text.slice(0, 24), status: 'seed', tags }));
-      toast(k==='读书' && tags.length ? '收进 ' + tags[0] + ' 了 📖' : '已种下,先安静待在「' + k + '」里');
-    }
-    $('#cap-text').value = ''; clearDraft('capture'); kind = null; syncChips(); route();
-  };
-};
 async function bumpCheckin(lang, n){
   const today = todayStr();
   const cur = await q(sb.from('lang_checkins').select('*').eq('date',today).eq('lang',lang).maybeSingle(), true);
@@ -1852,12 +1778,20 @@ VIEWS.grow = async function(filter){
   const rank = e => e.status==='released' ? 2 : (e.status==='done'||e.status==='settled' ? 1 : 0);  // 已放下的排最后
   list = [...list].sort((a,b) => rank(a) - rank(b));
   const star = growView === 'star';
+  /* 筛选只列真实存在的类别 —— 新记的一律是「灵感」,老数据里的旧类别不删,自己会随时间消失 */
+  const kinds = ['全部', ...[...new Set(all.map(e => e.kind).filter(Boolean))].sort((a,b)=>(a==='灵感'?-1:b==='灵感'?1:0))];
   $('#view').innerHTML = `
-    <div class="eyebrow">正在生长</div>
-    <h1 class="hero">最近的种子,不必马上成为答案</h1>
-    <p class="sub">${star?'每颗种子一颗星,同主题聚成星座;点星星打开那条灵感。':'默认只留原句;点开卡片,再整理它的状态与下一步。'}</p>
-    <div class="spread" style="margin-bottom:16px">
-      <div class="row">${star?'':['全部','灵感','学习','读书','项目','生活'].map(k=>`<span class="chip click ${k===f?'sel':''}" data-f="${k}">${k}</span>`).join('')}</div>
+    <div class="eyebrow">生长</div>
+    <h1 class="hero" style="margin:0 0 14px">先说出来,再慢慢整理</h1>
+    <div class="card">
+      <textarea id="cap-text" placeholder="写下一句话。想法、进展、身体感受,或者只是今天想记住的一件事……"></textarea>
+      <div class="spread" style="margin-top:12px">
+        <span class="muted">先留住原句就好,不用想它属于哪里</span>
+        <button class="primary" id="cap-save">种下 🌱</button>
+      </div>
+    </div>
+    <div class="spread" style="margin:26px 0 14px">
+      <div class="row">${star||kinds.length<3?'':kinds.map(k=>`<span class="chip click ${k===f?'sel':''}" data-f="${k}">${k}</span>`).join('')}</div>
       <div class="row"><span class="chip click ${star?'':'sel'}" data-view="list">列表</span><span class="chip click ${star?'sel':''}" data-view="star">✦ 星图</span></div>
     </div>
     ${star ? '<div id="starwrap" class="card" style="padding:6px"></div>' : `<div class="grid g2">
@@ -1873,11 +1807,22 @@ VIEWS.grow = async function(filter){
           </div>
           <div class="row" style="margin-top:12px">
             ${(NEXT_STATUS[e.status]||[]).map(s=>`<button data-adv="${e.id}" data-to="${s}">${STATUS_ZH[s]}</button>`).join('')}
+            <button class="ghost" data-t2add="${esc((e.title||e.content).slice(0,60))}" title="这其实是件要做的事">＋待办</button>
           </div>
         </div>
         <div class="tool-hint muted">点开整理 ↓</div>
       </div>`).join('') || '<div class="card"><div class="desc">这一类还没有种子。</div></div>'}
     </div>`}`;
+  bindTodoAdders();                      // 「＋待办」:这颗种子其实是件要做的事
+  keepDraft($('#cap-text'), 'capture');   // 没写完的字不会丢
+  $('#cap-save').onclick = async () => {
+    const text = $('#cap-text').value.trim();
+    if (!text) return toast('先写点什么');
+    celebrate($('#cap-save'), ['🌱','✦','✧','✦']);
+    await q(sb.from('entries').insert({ kind:'灵感', content:text, title:text.slice(0,24), status:'seed', tags:[] }));
+    $('#cap-text').value = ''; clearDraft('capture');
+    toast('已种下,先安静待着 🌱'); VIEWS.grow(f);
+  };
   document.querySelectorAll('[data-view]').forEach(c => c.onclick = () => { growView = c.dataset.view; VIEWS.grow(f); });
   if (star){ renderStar(all); return; }
   document.querySelectorAll('[data-f]').forEach(c => c.onclick = () => VIEWS.grow(c.dataset.f));
