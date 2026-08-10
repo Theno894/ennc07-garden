@@ -309,7 +309,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-13a</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-14a</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right">
@@ -473,6 +473,25 @@ function saveOneDraft(key){
   if (r.off || r.el.value === r.base) localStorage.removeItem(k);
   else localStorage.setItem(k, JSON.stringify({ v: r.el.value, base: r.base, at: Date.now() }));
 }
+/* ⚠️ 浏览器会把输入框里打过的字记成「表单历史」,下次点这个框就弹一个下拉,
+   连打到一半的半截句子都在里面 —— 那不是花园存的,是 Safari / Chrome 存的。
+   花园里的框都是内容框,不是表单字段,一律关掉;登录/密码框自己写了 autocomplete,不动它们。
+   用 MutationObserver 是因为弹窗、卡片是随时插进来的,一次性扫一遍盖不住。 */
+function noAutofill(root){
+  if (root.nodeType === 1 && root.matches && root.matches('input,textarea')) fixOne(root);
+  if (root.querySelectorAll) root.querySelectorAll('input,textarea').forEach(fixOne);
+  function fixOne(el){
+    if (el.hasAttribute('autocomplete')) return;   // 登录框自己声明过,别覆盖
+    el.setAttribute('autocomplete', 'off');
+    el.setAttribute('autocorrect', 'off');
+    el.setAttribute('spellcheck', 'false');
+    if (!el.name) el.name = 'nf-' + (el.id || Math.random().toString(36).slice(2, 8));
+  }
+}
+new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(noAutofill)))
+  .observe(document.documentElement, { childList: true, subtree: true });
+document.addEventListener('DOMContentLoaded', () => noAutofill(document));
+
 const saveAllDrafts = () => draftReg.forEach((_, key) => saveOneDraft(key));
 document.addEventListener('visibilitychange', saveAllDrafts);   // 只挂一次
 window.addEventListener('pagehide', saveAllDrafts);
@@ -2428,67 +2447,8 @@ VIEWS.lang = async function(){
       <span class="muted"><b style="color:var(--ink);font-size:19px">${totalN}</b> 个词</span>
       <span class="muted"><b style="color:var(--done);font-size:19px">${mastered.length}</b> 已长成</span>
       <span class="muted"><b style="color:var(--grow);font-size:19px">${due.length}</b> 待复习${dueMore?`<span style="font-size:12px"> · 后面还排着 ${dueMore}</span>`:''}</span>
-      ${examReady.length?`<span class="muted"><b style="color:var(--accent);font-size:19px">${examReady.length}</b> 待毕业考</span>`:''}
+      ${examReady.length?`<span class="muted click" id="exam-jump" style="cursor:pointer" title="跳到毕业考场"><b style="color:var(--accent);font-size:19px">${examReady.length}</b> 待毕业考 ↓${examIdle!==null&&examIdle>=7?`<span style="color:var(--danger);font-size:12px"> · ${examIdle} 天没考</span>`:''}</span>`:''}
     </div>
-    ${examReady.length ? `
-    <div class="card" style="margin-bottom:22px">
-      <div class="spread">
-        <div class="doodle"><span style="font-size:17px">🎓</span>
-          <b style="font-family:var(--hand-zh);font-size:19px">毕业考场</b></div>
-        <span class="muted" style="font-size:12.5px">${examIdle===null?'还没考过':`上次考试 ${examIdle} 天前`}</span>
-      </div>
-      <div class="muted" style="font-size:12.5px;margin-top:2px">
-        这 ${examReady.length} 个表达已经扛过闪卡 —— 现在要试试<b>能不能真的说出来</b></div>
-      <div class="row" style="margin-top:12px">
-        ${examReady.slice(0,20).map(i=>`<span class="chip click" data-word="${i.id}">${esc(i.expression)}${(i.exam_fail_count||0)?` <span style="opacity:.6">✕${i.exam_fail_count}</span>`:''}</span>`).join('')}
-      </div>
-      <div class="row" style="margin-top:14px">
-        <button class="primary" id="exam-copy">① 复制提示词</button>
-        <button class="ghost" id="exam-see" style="font-size:12.5px">看看写了什么</button>
-      </div>
-      <div class="muted" style="font-size:12px;margin-top:8px">
-        复制 → 开 GPT 语音 → 粘贴 → 它会藏着目标词跟你聊</div>
-      <div class="wave"></div>
-      <div class="muted" style="font-size:12.5px">② 考完了,把它给的那几行贴进来 ——</div>
-      <textarea id="exam-in" placeholder="PASS｜read too much into｜I wouldn't read too much into it.&#10;FAIL｜お邪魔します｜没主动说出来&#10;NEW｜brush it off｜一笑置之｜She just brushed it off." style="margin-top:8px;height:96px;font-size:12.5px"></textarea>
-      <div class="spread" style="margin-top:8px">
-        <span class="muted" style="font-size:12px">PASS 的直接长成 · FAIL 的打回闪卡 · NEW 的进候选箱</span>
-        <button class="primary" id="exam-apply">写进花园</button>
-      </div>
-      ${examIdle !== null && examIdle >= 7 ? `<div class="note" style="margin-top:12px"><div class="muted" style="font-size:12.5px">
-        ⚠️ 已经 ${examIdle} 天没考了。这些词现在<b>不在闪卡队列里</b>,也没被考 —— 它们正在慢慢忘掉。</div></div>` : ''}
-      ${stuckOnes.length ? `<div class="note" style="margin-top:12px">
-        <div class="muted" style="font-size:12.5px">这几个考挂 3 次以上了。有时候不是你的问题,是这个表达对你现在的场景没那么必要 ——</div>
-        ${stuckOnes.map(i=>`<div class="itemline" style="padding:6px 0">
-          <div class="desc" style="flex:1">${esc(i.expression)}<span class="muted" style="font-size:11px;margin-left:6px">挂了 ${i.exam_fail_count} 次</span></div>
-          <div class="row" style="gap:8px;flex:0 0 auto">
-            <button class="ghost" data-exkeep="${i.id}" style="font-size:11.5px">还想要</button>
-            <button class="ghost" data-exdrop="${i.id}" style="font-size:11.5px;color:var(--mute)">放下</button>
-          </div></div>`).join('')}
-      </div>` : ''}
-    </div>` : ''}
-    ${(cands||[]).length ? `
-    <div class="card" style="margin-bottom:22px">
-      <div class="spread">
-        <div class="doodle"><span style="font-size:16px">📥</span>
-          <b style="font-family:var(--hand-zh);font-size:19px">候选箱 (${cands.length})</b></div>
-        <button class="ghost" id="cand-none" style="font-size:11.5px;color:var(--mute)">都不要了</button>
-      </div>
-      <div class="muted" style="font-size:12.5px;margin-top:2px">
-        聊天里冒出来的表达。<b>先待在这儿,你点了「收下」才进闪卡</b> —— 免得学习债越滚越多</div>
-      ${cands.slice(0,12).map(c=>`<div class="itemline" style="padding:8px 0;align-items:flex-start">
-        <div style="flex:1">
-          <div class="exp" style="font-weight:500">${esc(c.expression)}
-            <span class="muted" style="font-size:11px;margin-left:4px">${langZh(c.lang)}</span></div>
-          ${c.meaning?`<div class="muted" style="font-size:12.5px">${esc(c.meaning)}</div>`:''}
-          ${c.example?`<div class="muted" style="font-size:12px;font-style:italic;opacity:.8">${esc(c.example)}</div>`:''}
-        </div>
-        <div class="row" style="gap:8px;flex:0 0 auto">
-          <button class="ghost" data-candyes="${c.id}" style="font-size:11.5px">收下 🌱</button>
-          <button class="ghost" data-candno="${c.id}" style="font-size:11.5px;color:var(--mute)">不用</button>
-        </div></div>`).join('')}
-      ${cands.length>12?`<div class="muted" style="font-size:12px;margin-top:8px">还有 ${cands.length-12} 个,处理完这批再看</div>`:''}
-    </div>` : ''}
     <div class="grid g2">${LANGS.map(l => col(l.c)).join('')}</div>
     <div class="spread" style="margin:34px 0 14px"><h2 class="sec" style="margin:0">${due.length ? `今天有 ${due.length} 个词在静静想你${dueMore?`　<span class="muted" style="font-size:13px;font-weight:400">后面还排着 ${dueMore} 个,不急</span>`:''}` : (langUI.revLang ? `${langZh(langUI.revLang)}今天练完了 🌿${dueAllRaw.length ? `　<span class="muted" style="font-size:13px;font-weight:400">别的语言还有 ${dueAllRaw.length} 个</span>` : ''}` : '今天没有词在等你,温室很安静')}</h2>
       ${(due.length||trapToday.length) ? '<button class="primary" id="focus-review">▶ 一个个见它们</button>' : ''}</div>
@@ -2531,6 +2491,65 @@ VIEWS.lang = async function(){
         <div class="tool-hint muted">点开复习 →</div>
       </div>`).join('') || '<div class="dashed" style="padding:20px;text-align:center"><div class="muted">词们都睡着了,明天再来看看 🌙</div></div>'}
     </div>
+    ${(cands||[]).length ? `
+    <div class="card" style="margin-bottom:22px">
+      <div class="spread">
+        <div class="doodle"><span style="font-size:16px">📥</span>
+          <b style="font-family:var(--hand-zh);font-size:19px">候选箱 (${cands.length})</b></div>
+        <button class="ghost" id="cand-none" style="font-size:11.5px;color:var(--mute)">都不要了</button>
+      </div>
+      <div class="muted" style="font-size:12.5px;margin-top:2px">
+        聊天里冒出来的表达。<b>先待在这儿,你点了「收下」才进闪卡</b> —— 免得学习债越滚越多</div>
+      ${cands.slice(0,12).map(c=>`<div class="itemline" style="padding:8px 0;align-items:flex-start">
+        <div style="flex:1">
+          <div class="exp" style="font-weight:500">${esc(c.expression)}
+            <span class="muted" style="font-size:11px;margin-left:4px">${langZh(c.lang)}</span></div>
+          ${c.meaning?`<div class="muted" style="font-size:12.5px">${esc(c.meaning)}</div>`:''}
+          ${c.example?`<div class="muted" style="font-size:12px;font-style:italic;opacity:.8">${esc(c.example)}</div>`:''}
+        </div>
+        <div class="row" style="gap:8px;flex:0 0 auto">
+          <button class="ghost" data-candyes="${c.id}" style="font-size:11.5px">收下 🌱</button>
+          <button class="ghost" data-candno="${c.id}" style="font-size:11.5px;color:var(--mute)">不用</button>
+        </div></div>`).join('')}
+      ${cands.length>12?`<div class="muted" style="font-size:12px;margin-top:8px">还有 ${cands.length-12} 个,处理完这批再看</div>`:''}
+    </div>` : ''}
+    ${examReady.length ? `
+    <div class="card" id="exam-zone" style="margin-bottom:22px;scroll-margin-top:90px">
+      <div class="spread">
+        <div class="doodle"><span style="font-size:17px">🎓</span>
+          <b style="font-family:var(--hand-zh);font-size:19px">毕业考场</b></div>
+        <span class="muted" style="font-size:12.5px">${examIdle===null?'还没考过':`上次考试 ${examIdle} 天前`}</span>
+      </div>
+      <div class="muted" style="font-size:12.5px;margin-top:2px">
+        这 ${examReady.length} 个表达已经扛过闪卡 —— 现在要试试<b>能不能真的说出来</b></div>
+      <div class="row" style="margin-top:12px">
+        ${examReady.slice(0,20).map(i=>`<span class="chip click" data-word="${i.id}">${esc(i.expression)}${(i.exam_fail_count||0)?` <span style="opacity:.6">✕${i.exam_fail_count}</span>`:''}</span>`).join('')}
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button class="primary" id="exam-copy">① 复制提示词</button>
+        <button class="ghost" id="exam-see" style="font-size:12.5px">看看写了什么</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px">
+        复制 → 开 GPT 语音 → 粘贴 → 它会藏着目标词跟你聊</div>
+      <div class="wave"></div>
+      <div class="muted" style="font-size:12.5px">② 考完了,把它给的那几行贴进来 ——</div>
+      <textarea id="exam-in" placeholder="PASS｜read too much into｜I wouldn't read too much into it.&#10;FAIL｜お邪魔します｜没主动说出来&#10;NEW｜brush it off｜一笑置之｜She just brushed it off." style="margin-top:8px;height:96px;font-size:12.5px"></textarea>
+      <div class="spread" style="margin-top:8px">
+        <span class="muted" style="font-size:12px">PASS 的直接长成 · FAIL 的打回闪卡 · NEW 的进候选箱</span>
+        <button class="primary" id="exam-apply">写进花园</button>
+      </div>
+      ${examIdle !== null && examIdle >= 7 ? `<div class="note" style="margin-top:12px"><div class="muted" style="font-size:12.5px">
+        ⚠️ 已经 ${examIdle} 天没考了。这些词现在<b>不在闪卡队列里</b>,也没被考 —— 它们正在慢慢忘掉。</div></div>` : ''}
+      ${stuckOnes.length ? `<div class="note" style="margin-top:12px">
+        <div class="muted" style="font-size:12.5px">这几个考挂 3 次以上了。有时候不是你的问题,是这个表达对你现在的场景没那么必要 ——</div>
+        ${stuckOnes.map(i=>`<div class="itemline" style="padding:6px 0">
+          <div class="desc" style="flex:1">${esc(i.expression)}<span class="muted" style="font-size:11px;margin-left:6px">挂了 ${i.exam_fail_count} 次</span></div>
+          <div class="row" style="gap:8px;flex:0 0 auto">
+            <button class="ghost" data-exkeep="${i.id}" style="font-size:11.5px">还想要</button>
+            <button class="ghost" data-exdrop="${i.id}" style="font-size:11.5px;color:var(--mute)">放下</button>
+          </div></div>`).join('')}
+      </div>` : ''}
+    </div>` : ''}
     ${mastered.length ? `<h2 class="sec">已长成 🌿 (${mastered.length})</h2>
       <div class="card"><div class="row">${mastered.slice(0,40).map(i=>`<span class="chip click" data-word="${i.id}">${esc(i.expression)}</span>`).join('')}</div></div>` : ''}
     <div class="spread" style="margin:34px 0 10px"><h2 class="sec" style="margin:0">我的词库 (${totalN})</h2>
@@ -2601,6 +2620,8 @@ VIEWS.lang = async function(){
   $('#lib-toggle') && ($('#lib-toggle').onclick = () => { langUI.libOpen = !langUI.libOpen; $('#lib-wrap').classList.toggle('hidden', !langUI.libOpen); $('#lib-toggle').textContent = langUI.libOpen?'收起 ▲':'展开 ▼'; if (langUI.libOpen) renderLib(); });
   $('#lib-q') && ($('#lib-q').oninput = e => { langUI.q = e.target.value; renderLib(); });
   document.querySelectorAll('[data-lf]').forEach(c => c.onclick = () => { langUI.filter = c.dataset.lf; document.querySelectorAll('[data-lf]').forEach(x=>x.classList.toggle('sel', x===c)); renderLib(); });
+  $('#exam-jump') && ($('#exam-jump').onclick = () =>
+    $('#exam-zone') && $('#exam-zone').scrollIntoView({ behavior:'smooth', block:'start' }));
   $('#pat-toggle') && ($('#pat-toggle').onclick = () => { langUI.patOpen = !langUI.patOpen; VIEWS.lang(); });
   document.querySelectorAll('[data-lv]').forEach(c => c.onclick = () => {   // 再点一次同一个 = 取消
     langUI.level = (langUI.level === c.dataset.lv) ? '' : c.dataset.lv; VIEWS.lang();
