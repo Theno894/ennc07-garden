@@ -14,28 +14,64 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;900&family=Noto+Sans+SC:wght@400;500&family=Zhi+Mang+Xing&family=Long+Cang&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* 主题在样式生效前就定好,避免刷新时闪一下别的颜色 */
+(function(){ try{ var t = localStorage.getItem('garden-theme') || 'indigo';
+  if (t !== 'indigo') document.documentElement.setAttribute('data-theme', t); }catch(e){} })();
+</script>
 <style>
 :root{
-  --paper:#f2efe6; --paper2:#f7f5ee; --card:#fdfcf8; --line:#e5e1d3;
-  --ink:#223428; --ink2:#41523f; --mute:#8a8d7c;
-  --grow:#a9822c; --done:#4a6b52; --settle:#9c6a4e; --wait:#5f7d99; --seed:#6d7580; --release:#8d8d85;
-  --accent:#2f4a3c; --danger:#a2543f;
-  --serif:'Noto Serif SC',serif;
-  /* 正文用最清楚的那套(和语言页一致) —— 手写体只留给标题 */
+  /* ── 靛蓝 · 默认 ───────────────────────────── */
+  --canvas:#F1F2F6; --paper:#FBFBFD; --paper-soft:#F2F3F8;
+  --ink:#252735; --subtle:#686C7B; --line:#D9DBE5;
+  --accent:#5B63A6; --accent-soft:#E7E9F5; --signal:#566180;
+}
+[data-theme="teal"]{
+  --canvas:#EFF3F3; --paper:#FBFCFC; --paper-soft:#EDF3F2;
+  --ink:#223033; --subtle:#657577; --line:#D4DFDE;
+  --accent:#3F7073; --accent-soft:#DCEBEA; --signal:#51756B;
+}
+[data-theme="mauve"]{
+  --canvas:#F4F1F5; --paper:#FDFBFD; --paper-soft:#F4EEF5;
+  --ink:#312633; --subtle:#746777; --line:#E1D7E2;
+  --accent:#795D86; --accent-soft:#EEE2F0; --signal:#74617E;
+}
+[data-theme="clay"]{
+  --canvas:#F2EFE9; --paper:#FBFAF7; --paper-soft:#F6F3ED;
+  --ink:#232721; --subtle:#6F736B; --line:#D9D6CE;
+  --accent:#9C4F38; --accent-soft:#EFE0D8; --signal:#355947;
+}
+:root{
+  /* 状态色:四套主题共用,统一压低饱和度,只用来区分不用来抢眼 */
+  --grow:#9A7B3F; --done:#4E7A5C; --settle:#8C6551; --wait:#5A7590;
+  --seed:#7A7E88; --release:#9A9A93; --danger:#A2543F;
+  /* 兼容旧变量名 —— 3000 行里到处都在用,别去一个个改 */
+  --card:var(--paper); --paper2:var(--canvas); --ink2:var(--signal); --mute:var(--subtle);
+  --yellow:var(--accent-soft); --mist:var(--line); --pink:var(--accent-soft);
+  --trunk:var(--signal); --inkdeep:var(--ink); --sage:var(--line);
+  /* 字体:衬线只给标题,正文一律高可读无衬线 */
+  --serif:'Noto Serif SC',Georgia,serif;
   --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",'Noto Sans SC',sans-serif;
+  --f-ja:"Hiragino Mincho ProN","Yu Mincho",YuMincho,"MS Mincho","Songti SC",serif;
+  --f-en:Georgia,"Iowan Old Style","Times New Roman",serif;
+  --f-zh:var(--sans);
+  --hand-zh:var(--serif); --hand-mix:var(--serif);   /* 手写体退休,留别名防碎 */
+  /* 形状 */
+  --r-lg:20px; --r-md:16px; --r-sm:10px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:linear-gradient(180deg,var(--paper) 0%,var(--paper2) 100%);color:var(--ink);font-family:var(--sans);min-height:100vh;font-size:15px;line-height:1.7}
+body{background:var(--canvas);color:var(--ink);font-family:var(--sans);min-height:100vh;font-size:15px;line-height:1.7}
 a{color:inherit;text-decoration:none}
 button{font-family:var(--sans);cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:8px 14px;font-size:14px;transition:.15s}
 button:hover{border-color:var(--accent)}
-button.primary{background:var(--accent);color:#fdfcf8;border-color:var(--accent)}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:500}
+button.primary:hover{background:var(--signal);border-color:var(--signal)}
 button.ghost{background:transparent;border:none;color:var(--mute);padding:4px 8px}
 input,textarea,select{font-family:var(--sans);font-size:15px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
 textarea{min-height:120px;resize:vertical;line-height:1.8}
 input:focus,textarea:focus{outline:none;border-color:var(--accent)}
 
-header.top{position:sticky;top:0;z-index:20;background:rgba(242,239,230,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--canvas) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .topbar{max-width:1120px;margin:0 auto;display:flex;align-items:center;gap:18px;padding:14px 20px}
 .logo{display:flex;align-items:center;gap:10px}
 .logo svg{width:30px;height:30px}
@@ -58,31 +94,31 @@ h2.sec{font-family:var(--serif);font-weight:600;font-size:21px;margin:34px 0 14p
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px}
 .card h3{font-family:var(--serif);font-weight:600;font-size:17.5px;margin:6px 0}
 .card .desc{color:var(--ink2);font-size:14px}
-.muted{color:var(--mute);font-size:13.5px}
+.muted{color:var(--subtle);font-size:13.5px}
 .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .spread{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 
-.chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;border-radius:999px;padding:3px 11px;background:var(--paper);border:1px solid var(--line);color:var(--ink2)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;border-radius:999px;padding:3px 11px;background:var(--paper-soft);border:1px solid var(--line);color:var(--ink2)}
 .chip .dot{width:7px;height:7px;border-radius:50%;background:var(--mute)}
 .chip.seed .dot{background:var(--seed)} .chip.growing .dot{background:var(--grow)}
 .chip.waiting .dot{background:var(--wait)} .chip.done .dot{background:var(--done)}
 .chip.settled .dot{background:var(--settle)} .chip.released .dot{background:var(--release)}
-.chip.sel{background:var(--accent);color:#fdfcf8;border-color:var(--accent)}
+.chip.sel{background:var(--accent);color:#fff;border-color:var(--accent)}
 .chip.click{cursor:pointer}
 
-.bar{height:7px;border-radius:99px;background:var(--paper);border:1px solid var(--line);overflow:hidden;margin:12px 0 6px}
-.bar i{display:block;height:100%;background:linear-gradient(90deg,#5b7a5e,#31493a);border-radius:99px}
+.bar{height:7px;border-radius:99px;background:var(--paper-soft);border:1px solid var(--line);overflow:hidden;margin:12px 0 6px}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
 
 .bignum{font-family:var(--serif);font-weight:900;font-size:34px}
-.note{background:#e7ebe9;border:1px solid #d5dcd8;border-radius:16px;padding:16px 20px}
-.toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);background:var(--accent);color:#fdfcf8;padding:10px 18px;border-radius:12px;font-size:14px;z-index:99;opacity:0;transition:.25s;pointer-events:none}
+.note{background:var(--paper-soft);border:1px solid var(--line);border-radius:var(--r-md);padding:16px 20px}
+.toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 18px;border-radius:12px;font-size:14px;z-index:99;opacity:0;transition:.25s;pointer-events:none}
 .toast.show{opacity:1}
 
-nav.mob{display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:30;background:rgba(253,252,248,.95);border:1px solid var(--line);border-radius:20px;box-shadow:0 8px 30px rgba(34,52,40,.10);padding:8px 6px}
+nav.mob{display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:30;background:var(--paper);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 6px 24px rgba(0,0,0,.07);padding:8px 6px}
 nav.mob .wrap{display:flex;justify-content:space-around;align-items:center}
 nav.mob a{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11.5px;color:var(--mute);padding:4px 8px}
-nav.mob a .ic{width:30px;height:30px;border-radius:50%;background:var(--paper);display:flex;align-items:center;justify-content:center;font-size:13px;font-family:var(--serif)}
-nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#fdfcf8}
+nav.mob a .ic{width:30px;height:30px;border-radius:50%;background:var(--paper-soft);display:flex;align-items:center;justify-content:center;font-size:13px;font-family:var(--serif)}
+nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#fff}
 
 .login-wrap{max-width:420px;margin:12vh auto 0;padding:0 20px}
 .login-card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:30px 28px;text-align:center}
@@ -96,8 +132,8 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
 .tool-hint{font-size:12px;margin-top:10px;text-align:right;user-select:none}
 .projcard{cursor:pointer;transition:border-color .15s}
 .projcard:hover{border-color:var(--accent)}
-.modal-mask{position:fixed;inset:0;background:rgba(34,52,40,.34);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
-.modal{background:var(--card);border:1px solid var(--line);border-radius:20px;max-width:640px;width:100%;padding:24px 26px;box-shadow:0 20px 60px rgba(34,52,40,.22)}
+.modal-mask{position:fixed;inset:0;background:rgba(20,22,30,.32);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+.modal{background:var(--paper);border:1px solid var(--line);border-radius:var(--r-lg);max-width:640px;width:100%;padding:24px 26px;box-shadow:0 16px 48px rgba(0,0,0,.16)}
 .modal h2{font-family:var(--serif);font-weight:900;font-size:22px;margin:6px 0}
 .check{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px dashed var(--line)}
 .check:first-of-type{border-top:none}
@@ -111,58 +147,45 @@ nav.mob a.on{color:var(--ink)} nav.mob a.on .ic{background:var(--accent);color:#
 .itemline:first-of-type{border-top:none}
 .cap-grid{display:grid;gap:14px;grid-template-columns:1.6fr 1fr}
 .card-done{opacity:.66}
-/* ——— 手账风(make it happen):手写字 + washi 胶带 + 异形圆角 + 手绘波浪 ——— */
-:root{
-  --yellow:#f2c94c; --mist:#9db8c4; --pink:#e8a0a2; --trunk:#b07d4f; --inkdeep:#22382c;
-  --hand-zh:"HanziPen SC","Wawati SC","Yuanti SC","Kaiti SC",var(--serif);
-  /* 学习内容专用:手写体好看,但对着它认字太累。
-     目标语言用「书上的字体」,中文解释用最清楚的黑体。 */
-  --f-ja:"Hiragino Mincho ProN","Yu Mincho",YuMincho,"MS Mincho","Songti SC",serif;
-  --f-en:Georgia,"Iowan Old Style","Times New Roman",serif;
-  --f-zh:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
-  --hand-mix:"Bradley Hand","Marker Felt","Chalkboard SE","Comic Sans MS","HanziPen SC","Wawati SC","Yuanti SC","Kaiti SC",cursive;
-}
-h1.hero{font-family:var(--hand-zh);font-weight:500;line-height:1.32;transform:rotate(-1deg);transform-origin:left center}
-h2.sec{font-family:var(--hand-zh);font-weight:500;font-size:24px}
-.modal h2{font-family:var(--hand-zh);font-weight:500}
-.eyebrow{font-family:var(--hand-zh);font-size:20px;letter-spacing:1px;color:var(--ink2)}
-.card h3{font-family:var(--hand-zh);font-weight:500}
-.bignum,#date-label{font-family:var(--hand-mix)}   /* 数字保留手写感 */
-.exp{font-family:var(--sans)}                       /* 条目标题是要读的,不用手写体 */
-/* washi 胶带条:暖黄 + 微旋转 + 撕边 */
-.washi{display:inline-block;padding:3px 14px 4px;background:var(--yellow);color:var(--inkdeep);
-  font-family:var(--hand-zh);font-size:13px;line-height:1.45;transform:rotate(-1.5deg);
-  clip-path:polygon(2% 14%,3.5% 0,96.5% 3%,100% 16%,98.5% 86%,96% 100%,2.5% 95%,0 80%)}
-/* 关键词异形高亮 */
-.kw{position:relative;display:inline-block;padding:0 .12em;color:var(--accent);transform:rotate(-1.4deg);z-index:0}
-.kw::before{content:"";position:absolute;left:-7%;right:-7%;top:.12em;bottom:.04em;background:var(--yellow);opacity:.45;
-  border-radius:.24em .32em .22em .36em / .32em .22em .36em .22em;transform:rotate(-.9deg);z-index:-1}
-/* 有机异形圆角卡片 */
-.card{border-radius:22px 18px 24px 16px / 18px 24px 16px 22px}
-.card:nth-of-type(even){border-radius:18px 24px 16px 22px / 24px 18px 22px 16px}
-.modal{border-radius:24px 20px 26px 18px / 20px 26px 18px 24px}
-button{border-radius:16px 13px 15px 12px / 13px 16px 12px 15px}
-.dashed{border:2px dashed var(--line);border-radius:20px 16px 22px 15px / 16px 22px 15px 20px;background:transparent}
-/* 手绘波浪分隔 */
-.wave{height:9px;margin:11px 0 9px;opacity:.42;background-repeat:repeat-x;background-size:24px 9px;
-  background-image:radial-gradient(circle at 6px 9px,transparent 5.4px,var(--sage,#4a6b52) 5.4px,var(--sage,#4a6b52) 6.6px,transparent 6.6px),radial-gradient(circle at 18px 0,transparent 5.4px,var(--sage,#4a6b52) 5.4px,var(--sage,#4a6b52) 6.6px,transparent 6.6px)}
+/* ══ 装饰退休：类名全部保留(3000 行里到处在用),只是重新定义成克制的样子 ══ */
+h1.hero{font-family:var(--serif);font-weight:600;font-size:clamp(26px,3.4vw,34px);line-height:1.3;transform:none;letter-spacing:-.01em}
+h2.sec{font-family:var(--serif);font-weight:600;font-size:22px;letter-spacing:-.005em}
+.modal h2{font-family:var(--serif);font-weight:600;font-size:21px}
+.eyebrow{font-family:var(--sans);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--subtle);font-weight:500}
+.card h3{font-family:var(--serif);font-weight:600;font-size:17px}
+.bignum{font-family:var(--serif);font-weight:600;font-size:30px;letter-spacing:-.02em}
+#date-label{font-family:var(--sans)}
+.exp{font-family:var(--sans);font-weight:500}
+/* washi 从胶带变成安静的标签 */
+.washi{display:inline-block;padding:2px 10px;background:var(--accent-soft);color:var(--accent);
+  font-family:var(--sans);font-size:12px;line-height:1.5;border-radius:999px;transform:none;clip-path:none}
+/* 关键词:只留颜色和字重,不要荧光笔 */
+.kw{color:var(--accent);font-weight:500;transform:none;padding:0}
+.kw::before{content:none}
+/* 圆角回正 */
+.card{border-radius:var(--r-md)}
+.card:nth-of-type(even){border-radius:var(--r-md)}
+.modal{border-radius:var(--r-lg)}
+button{border-radius:var(--r-sm)}
+.dashed{border:1px dashed var(--line);border-radius:var(--r-md);background:transparent}
+/* 波浪 → 一条细分隔线 */
+.wave{height:1px;margin:14px 0 12px;background:var(--line);opacity:1;background-image:none}
 .doodle{display:inline-flex;align-items:center;gap:7px;vertical-align:middle}
 .doodle svg{display:block;overflow:visible}
-.bean{animation:floaty 6s ease-in-out infinite;transform-origin:55% 85%}
+.bean{}
 @keyframes floaty{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-4px) rotate(1deg)}}
 /* ——— 微动效 ——— */
 /* 1. 输入框聚焦:手绘虚线框(真虚线,跟随圆角) */
-input,textarea{transition:outline-color .18s ease,background-color .18s ease;
-  border-radius:16px 13px 15px 12px / 13px 16px 12px 15px}
-input:focus,textarea:focus{outline:2px dashed var(--accent);outline-offset:3px;background:var(--card)}
+input,textarea{transition:border-color .18s ease;border-radius:var(--r-sm)}
+input:focus,textarea:focus{outline:2px solid var(--accent-soft);outline-offset:1px;border-color:var(--accent)}
 /* 2. 点击反馈 */
 button{transition:transform .12s ease,border-color .15s ease,background-color .15s ease,box-shadow .15s ease}
-button:hover{transform:translateY(-1px)}
+button:hover{background:var(--paper-soft)}
 button:active{transform:translateY(1px) scale(.985)}
 .chip.click{transition:transform .12s ease,background-color .15s ease}
 .chip.click:active{transform:scale(.94)}
 .card{transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
-.projcard:hover,.growcard:hover{transform:translateY(-2px)}
+.projcard:hover,.growcard:hover{border-color:var(--accent)}
 .itemline.click{transition:background-color .15s ease,padding-left .15s ease}
 .itemline.click:hover{padding-left:6px}
 /* 3. 出现:错落淡入 */
@@ -212,9 +235,9 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
 @keyframes breathe{0%,100%{opacity:.26}50%{opacity:.55}}
 .skel{animation:fadeIn .22s ease both}
 .sk-line{background:var(--line,#e6e2d8);border-radius:6px;animation:breathe 1.9s ease-in-out infinite}
-.sk-card{border:1.6px dashed var(--line,#e6e2d8);border-radius:18px 14px 20px 13px;
+.sk-card{border:1px dashed var(--line);border-radius:var(--r-md);
   height:128px;animation:breathe 1.9s ease-in-out infinite}
-.sk-card.sm{height:104px;border-radius:14px 19px 13px 17px}
+.sk-card.sm{height:104px;border-radius:var(--r-md)}
 .sk-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}
 .sk-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px}
 @media(max-width:720px){.sk-grid,.sk-grid3{grid-template-columns:1fr}}
@@ -260,10 +283,18 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-10d</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-11a</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
-    <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
+    <div class="top-right">
+      <span id="date-label"></span>
+      <select id="theme-pick" aria-label="主题色" title="主题色"
+        style="width:auto;padding:5px 8px;font-size:13px;border-radius:var(--r-sm)">
+        <option value="indigo">靛蓝</option><option value="teal">青灰</option>
+        <option value="mauve">灰紫</option><option value="clay">陶土</option>
+      </select>
+      <button class="ghost" id="btn-setpass" title="设置密码">设密码</button>
+      <button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
   </div>
 </header>
 
@@ -3229,6 +3260,16 @@ $('#login-pass').addEventListener('keydown', e => { if (e.key==='Enter') passLog
 $('#btn-magic').onclick = sendMagic;
 $('#btn-verify').onclick = verifyCode;
 $('#login-code').addEventListener('keydown', e => { if (e.key==='Enter') verifyCode(); });
+/* 主题:切了立刻生效,记在本地,刷新和切页都还在 */
+(function(){
+  const sel = $('#theme-pick'); if (!sel) return;
+  const cur = (()=>{ try { return localStorage.getItem('garden-theme') || 'indigo'; } catch { return 'indigo'; } })();
+  sel.value = cur;
+  const apply = t => { t==='indigo' ? document.documentElement.removeAttribute('data-theme')
+                                    : document.documentElement.setAttribute('data-theme', t); };
+  apply(cur);
+  sel.onchange = () => { apply(sel.value); try { localStorage.setItem('garden-theme', sel.value); } catch {} };
+})();
 $('#btn-setpass').onclick = setPassword;
 $('#btn-logout').onclick = async () => { await sb?.auth.signOut(); toast('下次见'); };
 initAuth();
