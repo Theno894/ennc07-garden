@@ -20,7 +20,9 @@
   --ink:#223428; --ink2:#41523f; --mute:#8a8d7c;
   --grow:#a9822c; --done:#4a6b52; --settle:#9c6a4e; --wait:#5f7d99; --seed:#6d7580; --release:#8d8d85;
   --accent:#2f4a3c; --danger:#a2543f;
-  --serif:'Noto Serif SC',serif; --sans:'Noto Sans SC',sans-serif;
+  --serif:'Noto Serif SC',serif;
+  /* 正文用最清楚的那套(和语言页一致) —— 手写体只留给标题 */
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",'Noto Sans SC',sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:linear-gradient(180deg,var(--paper) 0%,var(--paper2) 100%);color:var(--ink);font-family:var(--sans);min-height:100vh;font-size:15px;line-height:1.7}
@@ -125,7 +127,8 @@ h2.sec{font-family:var(--hand-zh);font-weight:500;font-size:24px}
 .modal h2{font-family:var(--hand-zh);font-weight:500}
 .eyebrow{font-family:var(--hand-zh);font-size:20px;letter-spacing:1px;color:var(--ink2)}
 .card h3{font-family:var(--hand-zh);font-weight:500}
-.bignum,.exp,#date-label{font-family:var(--hand-mix)}
+.bignum,#date-label{font-family:var(--hand-mix)}   /* 数字保留手写感 */
+.exp{font-family:var(--sans)}                       /* 条目标题是要读的,不用手写体 */
 /* washi 胶带条:暖黄 + 微旋转 + 撕边 */
 .washi{display:inline-block;padding:3px 14px 4px;background:var(--yellow);color:var(--inkdeep);
   font-family:var(--hand-zh);font-size:13px;line-height:1.45;transform:rotate(-1.5deg);
@@ -257,7 +260,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-10c</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-10d</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right"><span id="date-label"></span><button class="ghost" id="btn-setpass" title="设置密码">设密码</button><button class="ghost" id="btn-logout" title="退出登录">退出</button></div>
@@ -307,6 +310,11 @@ let session = null;
 const $  = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const todayStr = () => { const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+/* ⚠️ 数据库存的是 UTC。直接 .slice(0,10) 拿到的是 UTC 日期,
+   而 todayStr() 是本地日期 —— 中国 UTC+8,凌晨 0 点到 8 点做的事,
+   UTC 日期还停在昨天,于是「今天完成的」里看不见。必须换算成本地日期再比。 */
+const localDay = ts => { if (!ts) return ''; const d = new Date(ts); return isNaN(d) ? '' :
+  d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
 const fmtMD = s => { if(!s) return ''; const d = new Date(s); return (d.getMonth()+1)+'/'+String(d.getDate()).padStart(2,'0'); };
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
 /* 情绪时刻:在元素附近撒一小把星星 */
@@ -1227,7 +1235,7 @@ VIEWS.today = async function(){
   const today = todayStr();
   const [ds, projs, seeds, checkins, brief, news, langAll, taskAll, updAll] = await Promise.all([
     q(sb.from('daily_state').select('*').eq('date', today).maybeSingle(), true),
-    q(sb.from('projects').select('*').eq('status','growing').order('updated_at',{ascending:false})),
+    q(sb.from('projects').select('*').order('updated_at',{ascending:false})),   // 全部读:名字和分组要用;推荐时再按状态筛
     q(sb.from('entries').select('*').in('status',['seed','growing']).order('updated_at',{ascending:false})),
     q(sb.from('lang_checkins').select('*').eq('date', today)),
     q(sb.from('mail_briefs').select('*').order('date',{ascending:false}).limit(1)),
@@ -1244,7 +1252,7 @@ VIEWS.today = async function(){
   const gratPast = (gratAll||[]).filter(g => g.date !== today).slice(0,14);
   const gratRows = Math.max(3, (grat?.items||[]).length + (gratExtra||0));
   const winsToday = (winsAll||[]).filter(w => w.date === today);
-  const seedsToday = (seeds||[]).filter(e => (e.created_at||'').slice(0,10) === today);
+  const seedsToday = (seeds||[]).filter(e => localDay(e.created_at) === today);
   const winsBefore = (winsAll||[]).filter(w => w.date !== today).slice(0,5);
   const gratItems = grat?.items || [];
   const en = (checkins||[]).find(c=>c.lang==='en'), ja = (checkins||[]).find(c=>c.lang==='ja');
@@ -1276,7 +1284,7 @@ VIEWS.today = async function(){
   const maxRank = {low:1, mid:2, high:2}[energy] ?? 2;
   const liveTasks = (taskAll||[]).filter(t => !t.dropped && (
     (t.due && !t.done)                                   // 待做的:只看有截止日期的
-    || (t.done && (t.done_at||'').slice(0,10) === today) // 今天完成的:不管有没有日期、在哪儿勾的,全算
+    || (t.done && localDay(t.done_at) === today) // 今天完成的:不管有没有日期、在哪儿勾的,全算
   ));
   const urgent = (liveTasks
     .map(t => ({ ...dueMeta(t.due), row:t }))
@@ -1290,7 +1298,7 @@ VIEWS.today = async function(){
   const taskDone = new Set(liveTasks.filter(t=>t.done).map(t=>'task-'+t.id));
   // 今天手写进「走过的路」的记录,也算今天做的事(只读:它本来就是记录,没有"撤销"一说)
   const noteDone = (updAll||[])
-    .filter(n => (n.created_at||'').slice(0,10) === today && !String(n.note||'').startsWith('[拆解请求]'))
+    .filter(n => localDay(n.created_at) === today && !String(n.note||'').startsWith('[拆解请求]'))
     .map(n => ({ t: pjName[n.project_id] || '记录', title:n.note, sub:'', st:'seed',
                  go:'', gid:'', sid:'note-'+n.id, ro:true, pid:n.project_id }));
   const pickOne = arr => arr.length ? arr[Math.floor(Math.random()*arr.length)] : null;
