@@ -309,7 +309,7 @@ body.writing #hdr,body.writing #nav-mob,body.writing #view{display:none!importan
   <div class="topbar">
     <a class="logo" href="#today">
       <svg viewBox="0 0 32 32"><circle cx="13" cy="21" r="8" fill="#2f4a3c"/><path d="M14 20 C14 10, 22 4, 30 4 C30 14, 22 20, 14 20 Z" fill="#4a6b52"/></svg>
-      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-14a</span></span>
+      <span><span class="t1">灵感花园</span><br><span class="t2">INSIGHT GARDEN</span><span style="font-size:9px;color:var(--mute);opacity:.55;margin-left:5px">v08-15a</span><span id="demo-tag" class="hidden" style="font-size:9px;margin-left:5px;padding:1px 6px;border-radius:999px;background:var(--accent-soft);color:var(--accent-hover)">演示数据</span></span>
     </a>
     <nav class="desk" id="nav-desk"></nav>
     <div class="top-right">
@@ -361,7 +361,202 @@ const OWNER_NAME = 'Dou';
 
 /* ================= 基础 ================= */
 const configured = SUPABASE_URL.startsWith('https://');
-const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+/* ═══════════════ 演示模式 ?demo=1 ═══════════════
+   录屏 / 直播 / 截图 / 给别人看的时候用这个地址。
+   ⚠️ 它不是「把内容藏起来」—— 是把整个 sb 客户端换成一个内存假客户端,
+      真实数据库连一次请求都发不出去。所以不可能漏。
+   免登录、可交互(勾完成、加待办、改能量都真的会动),刷新即复位。 */
+const DEMO = new URLSearchParams(location.search).has('demo');
+const dISO = n => new Date(Date.now() + (n||0)*86400000).toISOString();
+const dDAY = n => dISO(n).slice(0,10);
+function demoSeed(){
+  const P = { a:'11111111-1111-1111-1111-111111111111', b:'22222222-2222-2222-2222-222222222222',
+              c:'33333333-3333-3333-3333-333333333333' };
+  return {
+  projects: [
+    { id:P.a, name:'上线一个给小团队用的排班工具', why:'朋友的咖啡店每周用手写排班,改一次全员重发一遍',
+      status:'growing', progress:60, created_at:dISO(-24), updated_at:dISO(0), kept_at:dISO(-2) },
+    { id:P.b, name:'把三个月的读书笔记整理成一篇长文', why:'散在六个地方,再不整理就等于没读',
+      status:'growing', progress:25, created_at:dISO(-40), updated_at:dISO(-3), kept_at:dISO(-3) },
+    { id:P.c, name:'学法语发音规则', why:'想在明年春天能读懂菜单',
+      status:'settled', progress:100, created_at:dISO(-70), updated_at:dISO(-12), kept_at:dISO(-12) },
+  ],
+  project_tasks: [
+    { id:'t1', project_id:P.a, title:'把「换班要两个人都同意」这条规则写清楚', done:false, due:dDAY(0), source:'manual', created_at:dISO(-3) },
+    { id:'t2', project_id:P.a, title:'画一版周视图给店长看', done:false, due:dDAY(2), source:'manual', created_at:dISO(-2) },
+    { id:'t3', project_id:P.a, title:'确认手机上一屏能不能放下七天', done:true, due:dDAY(-1), source:'manual', created_at:dISO(-5) },
+    { id:'t4', project_id:P.b, title:'先把六个地方的笔记合并到一个文件', done:true, due:null, source:'manual', created_at:dISO(-6) },
+    { id:'t5', project_id:P.b, title:'挑出真正记得住的那五条', done:false, due:dDAY(5), source:'manual', created_at:dISO(-4) },
+  ],
+  project_updates: [
+    { id:'u1', project_id:P.a, note:'跟店长聊了二十分钟,发现真正的痛点不是排班,是临时换班', created_at:dISO(0) },
+    { id:'u2', project_id:P.a, note:'第一版做成了日视图,自己用了一天就知道不对', created_at:dISO(-2) },
+    { id:'u3', project_id:P.b, note:'合并完发现有一半是重复的', created_at:dISO(-6) },
+  ],
+  entries: [
+    { id:'e1', kind:'灵感', title:'工具做得越贴心,人越不想动脑', content:'工具做得越贴心,人越不想动脑。留一点粗糙,反而让人保持在场。',
+      status:'growing', next_step:'找三个例子验证一下', tags:[], occurred_on:dDAY(0), created_at:dISO(0), updated_at:dISO(0) },
+    { id:'e2', kind:'灵感', title:'需求说得太细,反而做不出好东西', content:'需求说得太细,反而做不出好东西 —— 因为你把「怎么做」也说死了,对方就没法用他更熟的路子。',
+      status:'seed', next_step:'', tags:[], occurred_on:dDAY(0), created_at:dISO(0), updated_at:dISO(0) },
+    { id:'e3', kind:'灵感', title:'先让一件事跑起来,再让它变好', content:'先让一件事跑起来,再让它变好。顺序反过来的时候,我从来没做完过。',
+      status:'growing', next_step:'', tags:[], occurred_on:dDAY(-2), created_at:dISO(-2), updated_at:dISO(-1) },
+    { id:'e4', kind:'学习', title:'间隔重复的关键不是间隔', content:'间隔重复的关键不是间隔,是「差点想不起来」的那一下。太容易和太难都没用。',
+      status:'growing', next_step:'把复习难度调到七成能想起来', tags:[], occurred_on:dDAY(-5), created_at:dISO(-5), updated_at:dISO(-4) },
+    { id:'e5', kind:'读书', title:'把复杂问题拆到能验证为止', content:'把复杂问题拆到能验证为止 —— 拆不动的时候,多半是问题问错了。',
+      status:'settled', next_step:'', tags:['《怎样解题》'], occurred_on:dDAY(-9), created_at:dISO(-9), updated_at:dISO(-8) },
+    { id:'e6', kind:'灵感', title:'完成感和进度条是两件事', content:'完成感和进度条是两件事。进度条告诉你还差多少,完成感告诉你已经到哪儿了。',
+      status:'growing', next_step:'', tags:[], occurred_on:dDAY(-12), created_at:dISO(-12), updated_at:dISO(-11) },
+    { id:'e7', kind:'生活', title:'散步的时候想通的事,坐着从来想不通', content:'散步的时候想通的事,坐着从来想不通。',
+      status:'released', next_step:'', tags:[], occurred_on:dDAY(-30), created_at:dISO(-30), updated_at:dISO(-20) },
+  ],
+  daily_state: [{ date:dDAY(0), energy:'mid', actions:{ manual:[
+      { sid:'m1', title:'把周视图的草图发给店长' } ], done:['m1'], todo:null, todoEnergy:null }, updated_at:dISO(0) }],
+  wins: [{ id:'w1', content:'第一次主动把还没做完的东西给别人看', created_at:dISO(0) }],
+  gratitude: [{ id:'g1', date:dDAY(0), items:['楼下那家店今天开门了','朋友回消息很快',''], created_at:dISO(0) }],
+  lang_items: [
+    { id:'l1', lang:'en', expression:'read too much into', meaning:'v. 过度解读、想太多', example:"I wouldn't read too much into one bad review. / 别为一条差评想太多。",
+      success_streak:3, status:'exam_ready', mastered:false, exam_fail_count:0, source:'manual', created_at:dISO(-20), last_reviewed_at:dISO(-9), first_success_at:dISO(-17) },
+    { id:'l2', lang:'en', expression:'circle back', meaning:'v. 回头再谈、稍后跟进', example:"Let's circle back on this next week. / 这件事我们下周再谈。",
+      success_streak:2, status:'active', mastered:false, source:'manual', created_at:dISO(-14), last_reviewed_at:dISO(-4) },
+    { id:'l3', lang:'en', expression:'a stretch', meaning:'n. 有点勉强、说不太过去', example:"Calling it a strategy is a bit of a stretch. / 说它是战略有点勉强。",
+      success_streak:0, status:'active', mastered:false, source:'manual', created_at:dISO(-2), last_reviewed_at:null },
+    { id:'l4', lang:'ja', expression:'腑に落ちる', meaning:'想通了、真正接受了', example:'説明を聞いて、やっと腑に落ちた。/ 听完解释才算真的想通。',
+      success_streak:1, status:'active', mastered:false, source:'manual', created_at:dISO(-8), last_reviewed_at:dISO(-3) },
+    { id:'l5', lang:'ja', expression:'手戻りが発生する', meaning:'返工、白做一遍', example:'仕様が曖昧だと手戻りが発生する。/ 需求含糊就会返工。',
+      success_streak:3, status:'exam_ready', mastered:false, exam_fail_count:1, source:'manual', created_at:dISO(-22), last_reviewed_at:dISO(-10), first_success_at:dISO(-19) },
+    { id:'l6', lang:'ja', expression:'落とし所を探る', meaning:'找一个双方都能接受的落点', example:'両者の落とし所を探りたい。/ 想找一个双方都能接受的方案。',
+      success_streak:0, status:'active', mastered:false, source:'manual', created_at:dISO(-1), last_reviewed_at:null },
+    { id:'l7', lang:'ja', expression:'念のため', meaning:'以防万一、保险起见', example:'念のため確認させてください。/ 保险起见我确认一下。',
+      success_streak:4, status:'mastered', mastered:true, source:'manual', created_at:dISO(-60), last_reviewed_at:dISO(-20) },
+    { id:'l8', lang:'en', expression:'on the same page', meaning:'达成共识、想的是一回事', example:"Just want to make sure we're on the same page. / 只是想确认我们说的是一回事。",
+      success_streak:4, status:'mastered', mastered:true, source:'manual', created_at:dISO(-55), last_reviewed_at:dISO(-18) },
+  ],
+  lang_checkins: [{ date:dDAY(0), lang:'ja', items_added:2 }],
+  lang_candidates: [
+    { id:'c1', lang:'ja', expression:'見切り発車', meaning:'条件还没齐就先开始', example:'見切り発車で進めた結果、後で調整が増えた。', handled:false, created_at:dISO(0) },
+    { id:'c2', lang:'en', expression:'low-hanging fruit', meaning:'最容易拿到的成果', example:"Let's start with the low-hanging fruit.", handled:false, created_at:dISO(0) },
+  ],
+  lang_errors: [
+    { id:'x1', lang:'ja', tag:'助詞', hits:6, retired:false, success_streak:0, last_seen_at:dISO(-1), last_reviewed_at:null,
+      samples:[{ original:'資料が確認しました', at:dISO(-1) }, { original:'私は日本に住んでいた時', at:dISO(-6) }],
+      fixed:'資料を確認しました', zh:'我确认了资料', why:'他动词的宾语用を,が是主语' },
+    { id:'x2', lang:'ja', tag:'中文直訳', hits:4, retired:false, success_streak:1, last_seen_at:dISO(-3), last_reviewed_at:dISO(-2),
+      samples:[{ original:'この問題を解決する方法を探しています', at:dISO(-3) }],
+      fixed:'この件、どう進めるか考えています', zh:'我在想这件事怎么推进', why:'语法没错,但日本人不这么说 —— 太书面' },
+    { id:'x3', lang:'ja', tag:'自他動詞', hits:3, retired:false, success_streak:0, last_seen_at:dISO(-2), last_reviewed_at:null,
+      samples:[{ original:'会議が始めます', at:dISO(-2) }], fixed:'会議が始まります', zh:'会议要开始了', why:'始める是他动词,自己开始要用始まる' },
+    { id:'x4', lang:'en', tag:'時制', hits:2, retired:false, success_streak:2, last_seen_at:dISO(-11), last_reviewed_at:dISO(-5),
+      samples:[{ original:'I am working here since 2023', at:dISO(-11) }], fixed:"I've been working here since 2023", zh:'我从 2023 年起就在这儿', why:'since 要配完成进行时' },
+  ],
+  lang_reports: [{ date:dDAY(-2), raw:{ lang:'ja', patterns:[
+      { zh:'先确认一下再往下走', en:'一旦確認してから進めます', scene:'工作' },
+      { zh:'这个我不太确定,查一下再回复你', en:'そこは確認して折り返します', scene:'工作' },
+      { zh:'能不能给我一天时间想想', en:'一日だけ考えるお時間をいただけますか', scene:'面试' } ] } }],
+  ai_insights: [{ id:'i1', scope:'lang_monthly', date:dDAY(-1),
+    content:'这个月收的词里,有七成是「说不出来」而不是「听不懂」的类型。听力那边已经稳了,可以把重心整个挪到开口上。' }],
+  news_briefs: [{ id:'n1', kind:'news', date:dDAY(0), headline:'开源模型的推理成本又降了一档,小团队自建的门槛在往下走',
+    term:'蒸馏', full_md:'(演示数据)', items:[
+      { title:'某开源模型放出更小的版本,单卡可跑', summary:'参数量下降但基准分只掉了几个点' },
+      { title:'一家云厂商下调了推理定价', summary:'长上下文的价格降幅最大' },
+      { title:'企业侧调查:落地卡点从「模型不够好」变成「流程没理清」', summary:'受访者里超过一半这么说' } ],
+    opportunities:['小团队自建的窗口打开了,成本不再是主要障碍','「流程没理清」正是需求梳理能力值钱的地方'] }],
+  mail_briefs: [{ id:'b1', date:dDAY(0), important_count:2, summary_md:'', items:[
+      { from:'咖啡店 · 店长', subject:'周视图看了,有两个地方想改', action:'回复店长关于周视图的两处修改' },
+      { from:'读书小组', subject:'下周分享轮到你了', action:'确认下周分享的时间' } ] }],
+  memories: [
+    { id:'mm1', content:'做东西的时候容易一路做下去,忘了先问有没有人要', context:'开始新东西之前先找一个人聊二十分钟', kind:'pattern', weight:3, private:false, created_at:dISO(-30) },
+    { id:'mm2', content:'「等准备好了再发」这句话出现的时候,通常已经准备好了', context:'', kind:'pattern', weight:2, private:false, created_at:dISO(-15) },
+  ],
+  drafts: [{ id:'d1', title:'为什么我删掉了自己产品里的进度条', status:'draft', body:'(演示数据)', created_at:dISO(0), updated_at:dISO(0) }],
+  }; }
+
+/* 假客户端:把 supabase-js 的链式写法在内存里重演一遍。
+   只实现花园真正用到的那些方法 —— select/insert/update/upsert/delete
+   + eq/in/is/contains/order/limit/single/maybeSingle。 */
+function demoClient(){
+  const DB = demoSeed();
+  let seq = 0;
+  const uid = () => 'demo-' + (++seq) + '-' + Date.now().toString(36);
+  const th = v => ({ then:(r,j)=>Promise.resolve(v).then(r,j), catch:()=>{}, finally:f=>{f&&f();} });
+  function table(name){
+    const rows = () => (DB[name] = DB[name] || []);
+    let mode='select', payload=null, conds=[], ord=null, lim=null, one=false, may=false, onConf=null;
+    const self = {};
+    const ret = () => self;
+    const match = r => conds.every(c => c(r));
+    Object.assign(self, {
+      select(){ if (mode==='select') mode='select'; return ret(); },
+      insert(v){ mode='insert'; payload=v; return ret(); },
+      update(v){ mode='update'; payload=v; return ret(); },
+      upsert(v,o){ mode='upsert'; payload=v; onConf=o; return ret(); },
+      delete(){ mode='delete'; return ret(); },
+      eq(c,v){ conds.push(r => String(r[c]) === String(v)); return ret(); },
+      neq(c,v){ conds.push(r => String(r[c]) !== String(v)); return ret(); },
+      in(c,a){ conds.push(r => (a||[]).map(String).includes(String(r[c]))); return ret(); },
+      is(c,v){ conds.push(r => (r[c] ?? null) === v); return ret(); },
+      contains(c,a){ conds.push(r => (a||[]).every(x => (r[c]||[]).includes(x))); return ret(); },
+      gte(c,v){ conds.push(r => r[c] >= v); return ret(); },
+      lte(c,v){ conds.push(r => r[c] <= v); return ret(); },
+      order(c,o){ ord = { c, asc: !o || o.ascending !== false }; return ret(); },
+      limit(n){ lim = n; return ret(); },
+      single(){ one = true; return ret(); },
+      maybeSingle(){ may = true; return ret(); },
+      then(res, rej){
+        let data = null;
+        try {
+          if (mode === 'insert'){
+            const arr = (Array.isArray(payload) ? payload : [payload]).map(v => ({ id: uid(), created_at:dISO(0), updated_at:dISO(0), ...v }));
+            rows().unshift(...arr); data = arr;
+          } else if (mode === 'update'){
+            data = rows().filter(match); data.forEach(r => Object.assign(r, payload, { updated_at: dISO(0) }));
+          } else if (mode === 'upsert'){
+            const arr = Array.isArray(payload) ? payload : [payload];
+            const keys = String((onConf && onConf.onConflict) || 'date').split(',').map(k=>k.trim());
+            data = arr.map(v => {
+              const hit = rows().find(r => keys.every(k => String(r[k]) === String(v[k])));
+              if (hit){ Object.assign(hit, v); return hit; }
+              const nw = { id: uid(), created_at:dISO(0), ...v }; rows().unshift(nw); return nw;
+            });
+          } else if (mode === 'delete'){
+            const gone = rows().filter(match);
+            DB[name] = rows().filter(r => !match(r)); data = gone;
+          } else {
+            data = rows().filter(match);
+            if (ord) data = [...data].sort((a,b) => {
+              const x = a[ord.c] ?? '', y = b[ord.c] ?? '';
+              return (x < y ? -1 : x > y ? 1 : 0) * (ord.asc ? 1 : -1);
+            });
+            if (lim != null) data = data.slice(0, lim);
+          }
+          if (one || may) data = (Array.isArray(data) ? data[0] : data) || null;
+          return Promise.resolve({ data: JSON.parse(JSON.stringify(data)), error: null }).then(res, rej);
+        } catch (e){ return Promise.resolve({ data:null, error:{ message:String(e) } }).then(res, rej); }
+      },
+    });
+    return self;
+  }
+  return {
+    from: table,
+    rpc: () => th({ data:null, error:null }),
+    functions: { invoke: (_n, opt) => {
+      const m = opt && opt.body && opt.body.mode;
+      if (m === 'lookup') return Promise.resolve({ data:{ card:{ expression:(opt.body.expression||'demo'), pron:'/ˈdɛmoʊ/', pos:'n.',
+        meaning:'演示用的示例释义', example:'This is a demo card. / 这是一张演示卡片。', note:'演示模式下不会真的调用 AI' } }, error:null });
+      return Promise.resolve({ data:{ text:'（演示模式：这里本来是 AI 的回答）' }, error:null });
+    }},
+    auth: {
+      getSession: () => Promise.resolve({ data:{ session:{ user:{ email:'demo@garden.example' } } } }),
+      onAuthStateChange: () => ({ data:{ subscription:{ unsubscribe(){} } } }),
+      signInWithOtp: () => Promise.resolve({ error:null }),
+      signInWithPassword: () => Promise.resolve({ error:null }),
+      verifyOtp: () => Promise.resolve({ error:null }),
+      updateUser: () => Promise.resolve({ error:null }),
+      signOut: () => Promise.resolve({ error:null }),
+    },
+  };
+}
+const sb = DEMO ? demoClient() : (configured ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null);
 let session = null;
 
 const $  = s => document.querySelector(s);
@@ -1094,6 +1289,7 @@ function showApp(){
   } else {
     $('#hdr').classList.remove('hidden'); $('#nav-mob').classList.remove('hidden');
     $('#login-view').classList.add('hidden');
+    if (DEMO) $('#demo-tag') && $('#demo-tag').classList.remove('hidden');
     route();
   }
 }
